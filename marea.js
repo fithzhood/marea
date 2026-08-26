@@ -1361,7 +1361,14 @@
     },
     play: function (a, b, c, op) { S.a = a; S.b = b; S.c = c; S.op = op; startProblem(); },
     bend: function (d) { S.bend.d = d; bendRelease(); },
-    sea: function (y) { setSea(y); },
+    sea: function (y) {
+      /* sale a passetti come farebbe un dito, così passa il controllo di velocità */
+      var passo = (V.y1 - V.y0) * .01, g = 0;
+      while (!S.sea.locked && Math.abs(S.sea.y - y) > passo && g++ < 3000) {
+        setSea(S.sea.y + (y > S.sea.y ? passo : -passo));
+      }
+      if (!S.sea.locked) setSea(y);
+    },
     hero: function (kind) { chooseHero(kind); },
     tick: function (ms) { advance(ms || 16); },
     size: function () { return { W: W, H: H }; },
