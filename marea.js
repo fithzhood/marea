@@ -52,6 +52,13 @@
     return s.replace('-', MINUS).replace('.', ',');
   }
 
+  /* i cartelli durante la marea: sempre due decimali, o non si capisce quanto manca */
+  function fmtMis(v) {
+    var s = v.toFixed(2);
+    if (s === '-0.00') s = '0.00';
+    return s.replace('-', MINUS).replace('.', ',');
+  }
+
   var OPS = ['>', '<', '>=', '<='];
   function opSym(op) { return op === '>' ? '>' : op === '<' ? '<' : op === '>=' ? '≥' : '≤'; }
 
@@ -485,7 +492,7 @@
     var pxs = [], labs = [];
     for (i = 0; i < xs.length; i++) {
       pxs.push(X2P(xs[i]));
-      labs.push(esatto ? fmtNum(xs[i]) : fmtDec(xs[i]));
+      labs.push(esatto ? fmtNum(xs[i]) : fmtMis(xs[i]));
     }
     for (i = 0; i < xs.length; i++) {
       var px = pxs[i];
