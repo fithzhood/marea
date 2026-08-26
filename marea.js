@@ -815,6 +815,18 @@
     return 'Io mi trovo tra ' + fmtNum(z.lo) + ' e ' + fmtNum(z.hi);
   }
 
+  /* il punto di terreno più pianeggiante fra quelli in vista */
+  function flatSpot() {
+    var best = W / 2, bestScore = -1e9;
+    for (var k = 0; k <= 24; k++) {
+      var px = 34 + (W - 68) * k / 24, gy = ground(px);
+      if (gy < 60 || gy > H - 30) continue;
+      var sc = -Math.abs(ground(px + 5) - ground(px - 5));
+      if (sc > bestScore) { bestScore = sc; best = px; }
+    }
+    return best;
+  }
+
   function placeHeroes() {
     S.heroes = [];
     if (!S.hero) return;
@@ -857,12 +869,19 @@
       S.heroes.push({ x: X2P(roots[0]), y: isAlp ? ground(X2P(roots[0])) : Y2P(0) + 14, s: .9,
         text: 'Ci sto solo in ' + fmtNum(roots[0]) });
     } else {
-      S.heroes.push({ x: W / 2, y: isAlp ? H * .3 : H * .3, s: .9, floating: true,
-        text: isAlp ? 'Qui non emerge niente!' : 'Qui non c’è acqua!' });
+      /* nessun posto dove stare: resta in piedi sul terreno, scontento */
+      var spot = flatSpot(), gy = ground(spot);
+      var y = (gy > 40 && gy < H - 20) ? gy : H * .62;
+      S.heroes.push({
+        x: spot, y: y, s: 1, standing: true, sad: true,
+        underwater: isAlp && y > Y2P(0),        /* l'alpinista senza montagne è sott'acqua */
+        text: isAlp ? 'Qui non c’è nessuna montagna… blub blub!'
+                    : 'Qui non c’è acqua da nessuna parte'
+      });
     }
   }
 
-  function drawClimber(s) {
+  function drawClimber(s, sad) {
     var w = s * .34;
     ctx.lineCap = 'round';
     ctx.strokeStyle = '#2b3a55'; ctx.lineWidth = s * .1;
@@ -873,14 +892,58 @@
     ctx.fillStyle = '#8b5a2b'; roundRect(-w * .78, -s * .74, w * .55, s * .32, s * .05); ctx.fill();
     ctx.fillStyle = '#e04b3a'; roundRect(-w * .44, -s * .76, w * .88, s * .44, s * .07); ctx.fill();
     ctx.strokeStyle = '#e04b3a'; ctx.lineWidth = s * .09;
-    ctx.beginPath(); ctx.moveTo(w * .3, -s * .68); ctx.lineTo(w * .64, -s * .88); ctx.stroke();
-    ctx.strokeStyle = '#cfd6dd'; ctx.lineWidth = s * .045;
-    ctx.beginPath(); ctx.moveTo(w * .52, -s * .74); ctx.lineTo(w * .84, -s * 1.04);
-    ctx.moveTo(w * .84, -s * 1.04); ctx.lineTo(w * .6, -s * 1.02); ctx.stroke();
+    if (sad) {                       /* braccio giù e piccozza a terra */
+      ctx.beginPath(); ctx.moveTo(w * .4, -s * .68); ctx.lineTo(w * .54, -s * .38); ctx.stroke();
+      ctx.strokeStyle = '#cfd6dd'; ctx.lineWidth = s * .045;
+      ctx.beginPath(); ctx.moveTo(w * .54, -s * .4); ctx.lineTo(w * .6, -s * .02);
+      ctx.moveTo(w * .6, -s * .02); ctx.lineTo(w * .44, -s * .08); ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.moveTo(w * .3, -s * .68); ctx.lineTo(w * .64, -s * .88); ctx.stroke();
+      ctx.strokeStyle = '#cfd6dd'; ctx.lineWidth = s * .045;
+      ctx.beginPath(); ctx.moveTo(w * .52, -s * .74); ctx.lineTo(w * .84, -s * 1.04);
+      ctx.moveTo(w * .84, -s * 1.04); ctx.lineTo(w * .6, -s * 1.02); ctx.stroke();
+    }
     ctx.fillStyle = '#f0c9a0'; ctx.beginPath(); ctx.arc(0, -s * .88, s * .135, 0, 6.2832); ctx.fill();
     ctx.fillStyle = '#ffca47';
     ctx.beginPath(); ctx.arc(0, -s * .90, s * .16, Math.PI, 0); ctx.fill();
     ctx.fillRect(-s * .17, -s * .91, s * .34, s * .045);
+  }
+
+  /* subacqueo a terra: in piedi, pinne larghe, maschera alzata e broncio */
+  function drawStandingDiver(s) {
+    var w = s * .34;
+    ctx.lineCap = 'round';
+    /* pinne, con un filo di bordo chiaro o spariscono sul terreno scuro */
+    ctx.fillStyle = '#16232f'; ctx.strokeStyle = 'rgba(200,222,236,.8)'; ctx.lineWidth = s * .022;
+    ctx.beginPath(); ctx.ellipse(-w * .74, -s * .03, w * .6, s * .075, .14, 0, 6.2832); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(w * .74, -s * .03, w * .6, s * .075, -.14, 0, 6.2832); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = '#1b2a3a'; ctx.lineWidth = s * .11;      /* gambe */
+    ctx.beginPath();
+    ctx.moveTo(-w * .32, -s * .07); ctx.lineTo(-w * .22, -s * .36);
+    ctx.moveTo(w * .32, -s * .07); ctx.lineTo(w * .22, -s * .36);
+    ctx.stroke();
+    ctx.fillStyle = '#9aa7b2';                                  /* bombola di lato */
+    roundRect(-w * .95, -s * .76, w * .32, s * .38, s * .06); ctx.fill();
+    ctx.strokeStyle = '#c9d3da'; ctx.lineWidth = s * .028;      /* tubo verso la testa */
+    ctx.beginPath(); ctx.moveTo(-w * .8, -s * .74); ctx.lineTo(-s * .16, -s * .88); ctx.stroke();
+    ctx.fillStyle = '#1b2a3a';                                  /* busto */
+    roundRect(-w * .46, -s * .76, w * .92, s * .44, s * .08); ctx.fill();
+    ctx.strokeStyle = '#1b2a3a'; ctx.lineWidth = s * .095;      /* braccia giù, spalle basse */
+    ctx.beginPath();
+    ctx.moveTo(-w * .44, -s * .68); ctx.lineTo(-w * .6, -s * .4);
+    ctx.moveTo(w * .44, -s * .68); ctx.lineTo(w * .6, -s * .4);
+    ctx.stroke();
+    ctx.fillStyle = '#f0c9a0';                                  /* testa */
+    ctx.beginPath(); ctx.arc(0, -s * .92, s * .175, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = '#8ee6ff';                                  /* maschera alzata sulla fronte */
+    roundRect(-s * .18, -s * 1.09, s * .36, s * .12, s * .035); ctx.fill();
+    ctx.strokeStyle = '#16232f'; ctx.lineWidth = s * .028;
+    ctx.beginPath(); ctx.moveTo(-s * .19, -s * 1.02); ctx.lineTo(s * .19, -s * 1.02); ctx.stroke();
+    ctx.fillStyle = '#16232f';                                  /* occhi */
+    ctx.beginPath(); ctx.arc(-s * .065, -s * .945, s * .023, 0, 6.2832);
+    ctx.arc(s * .065, -s * .945, s * .023, 0, 6.2832); ctx.fill();
+    ctx.strokeStyle = '#9c6552'; ctx.lineWidth = s * .028;      /* broncio */
+    ctx.beginPath(); ctx.arc(0, -s * .84, s * .075, Math.PI * 1.22, Math.PI * 1.78); ctx.stroke();
   }
 
   function drawDiver(s) {
@@ -908,7 +971,21 @@
     ctx.globalAlpha = alpha;
     ctx.font = '600 12.5px ' + FONT;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    var wp = ctx.measureText(text).width + 20, hp = 26;
+    /* le frasi lunghe vanno su due righe, spezzate dove le due metà si pareggiano */
+    var righe = [text], k;
+    if (ctx.measureText(text).width + 20 > W - 26) {
+      var par = text.split(' '), tagl = -1, diff = 1e9;
+      for (k = 1; k < par.length; k++) {
+        var d = Math.abs(ctx.measureText(par.slice(0, k).join(' ')).width -
+                         ctx.measureText(par.slice(k).join(' ')).width);
+        if (d < diff) { diff = d; tagl = k; }
+      }
+      if (tagl > 0) righe = [par.slice(0, tagl).join(' '), par.slice(tagl).join(' ')];
+    }
+    var wp = 0;
+    for (k = 0; k < righe.length; k++) wp = Math.max(wp, ctx.measureText(righe[k]).width);
+    wp += 20;
+    var hp = righe.length > 1 ? 42 : 26;
     var bx = clamp(x, wp / 2 + 5, W - wp / 2 - 5), by = y;
     ctx.fillStyle = 'rgba(255,255,255,.96)';
     roundRect(bx - wp / 2, by - hp / 2, wp, hp, 9); ctx.fill();
@@ -917,7 +994,10 @@
     ctx.lineTo(clamp(x, bx - wp / 2 + 8, bx + wp / 2 - 8) + 5, by + hp / 2 - 1);
     ctx.lineTo(x, by + hp / 2 + 9);
     ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#123049'; ctx.fillText(text, bx, by + 1);
+    ctx.fillStyle = '#123049';
+    for (k = 0; k < righe.length; k++) {
+      ctx.fillText(righe[k], bx, by + 1 + (righe.length > 1 ? (k === 0 ? -9 : 9) : 0));
+    }
     ctx.restore();
   }
 
@@ -929,19 +1009,36 @@
       var t = easeOut(clamp(S.heroT * 1.35 - i * .18, 0, 1));
       if (t <= 0) continue;
       var s = 46 * h.s;
-      var bob = isAlp && !h.floating ? 0 : Math.sin(S.t * 1.5 + i * 2) * 3;
+      var aTerra = isAlp || h.standing;
+      var bob = aTerra ? 0 : Math.sin(S.t * 1.5 + i * 2) * 3;
       ctx.save();
       ctx.globalAlpha = t;
       ctx.translate(h.x, h.y + bob - (1 - t) * 30);
-      if (isAlp) drawClimber(s); else drawDiver(s);
+      if (isAlp) drawClimber(s, h.sad);
+      else if (h.standing) drawStandingDiver(s);
+      else drawDiver(s);
       ctx.restore();
+      /* chi è finito sott'acqua fa le bollicine */
+      if (h.underwater) {
+        ctx.save(); ctx.globalAlpha = t * .9;
+        ctx.fillStyle = 'rgba(226,250,255,.85)';
+        ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.lineWidth = 1.4;
+        for (var b = 0; b < 4; b++) {
+          var ph = (S.t * .42 + b * .26) % 1;
+          var r = s * (.11 - b * .012) * (1 - ph * .35);
+          ctx.beginPath();
+          ctx.arc(h.x + s * .22 + Math.sin(ph * 4 + b) * s * .07, h.y - s * 1.02 - ph * s * 1.1, r, 0, 6.2832);
+          ctx.fill(); ctx.stroke();
+        }
+        ctx.restore();
+      }
       /* fumetto sopra la testa, scansato se due si accavallano */
       if (S.bubbleT > 0) {
-        var by = h.y + bob - (isAlp ? s * 1.15 : s * .55) - 14;
+        var by = h.y + bob - (aTerra ? s * 1.15 : s * .55) - 14;
         for (var k = 0; k < used.length; k++) {
           if (Math.abs(used[k].x - h.x) < 150 && Math.abs(used[k].y - by) < 30) by = used[k].y - 34;
         }
-        by = clamp(by, 20, H - 20);
+        by = clamp(by, 32, H - 32);
         used.push({ x: h.x, y: by });
         drawBalloon(h.x, by, h.text, S.bubbleT * t);
       }
