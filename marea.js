@@ -1297,6 +1297,7 @@
     if (!editing) scegli('a');
     var v = draft[editing];
     if (k === 'del') { v = v.length ? v.slice(0, -1) : ''; fresh = false; }
+    else if (k === 'clear') { v = ''; fresh = false; }        /* Canc: svuota la casella */
     else if (k === 'neg') { v = v.charAt(0) === '-' ? v.slice(1) : '-' + v; fresh = false; }
     else if (fresh) { v = k; fresh = false; }                     /* rimpiazza il valore che c'era */
     else if (v.replace('-', '').length < 3) v = (v === '0' ? '' : v) + k;
@@ -1316,6 +1317,7 @@
     if (k >= '0' && k <= '9') { premiTasto(k); e.preventDefault(); }
     else if (k === '-' || k === '+') { premiTasto('neg'); e.preventDefault(); }
     else if (k === 'Backspace') { premiTasto('del'); e.preventDefault(); }
+    else if (k === 'Delete') { premiTasto('clear'); e.preventDefault(); }
     else if (k === 'Enter') { if (!$('#btn-start').disabled) $('#btn-start').click(); e.preventDefault(); }
     else if (k === 'Tab' || k === 'ArrowRight' || k === 'ArrowLeft') {
       var ordine = ['a', 'b', 'c'], i = ordine.indexOf(editing);
