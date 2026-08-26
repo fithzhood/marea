@@ -784,10 +784,12 @@
   }
   function setSea(y) {
     if (S.sea.locked) return;
-    var span = V.y1 - V.y0, prev = S.sea.y;
+    var prev = S.sea.y;
     y = clamp(y, S.sea.min, S.sea.max);
-    /* aggancio alla quota zero: per vicinanza, oppure se un gesto veloce la scavalca */
-    if (Math.abs(y) < span * .035 || (prev < 0 && y >= 0) || (prev > 0 && y <= 0)) {
+    /* Aggancio stretto: solo quando il pelo dell'acqua è praticamente sulla quota zero
+       (5 px), oppure quando la scavalca. Una calamita larga toglieva all'utente la
+       regolazione fine e sembrava che l'app aggiustasse da sé. */
+    if (Math.abs(Y2P(y) - Y2P(0)) < 5 || (prev < 0 && y >= 0) || (prev > 0 && y <= 0)) {
       S.sea.y = 0;
       revealRoots();
     } else S.sea.y = y;
