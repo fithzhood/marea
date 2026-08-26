@@ -85,7 +85,7 @@
     zones: [], okZones: [], attempts: 0, fish: [], fishMax: 0,
     hero: null, heroes: [], heroT: 0, bubbleT: 0,
     bend: { tL: 0, tR: 0, side: null, dragY0: 0, dragT0: 0, corsa: 0, dragging: false, touched: false, busy: false },
-    sea: { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 },
+    sea: { y: 0, min: 0, max: 0, tocca: null, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 },
     trees: [],
     t: 0
   };
@@ -177,7 +177,7 @@
   }
   function after(ms, fn) { tween(function () { return 0; }, function () {}, 1, ms, fn); }
 
-  function advance(ms) { CLOCK += ms; S.t = CLOCK / 1000; runTweens(); updateFish(ms / 1000); draw(); }
+  function advance(ms) { CLOCK += ms; S.t = CLOCK / 1000; runTweens(); tieniFermo(); updateFish(ms / 1000); draw(); }
 
   /* ═══════════════ disegno ═══════════════ */
   var clouds = [
@@ -427,12 +427,21 @@
     if (S.phase === 'bend' || S.phase === 'setup') return;
     if (S.sea.locked && !S.sea.auto) return;
     var y = Y2P(S.sea.y);
+    /* mentre si sta fermi sulla quota giusta la linea si accende: mezzo secondo e aggancia */
+    var attesa = (S.sea.tocca != null) ? clamp((CLOCK - S.sea.tocca) / 500, 0, 1) : 0;
     ctx.save();
-    ctx.setLineDash([7, 6]);
-    ctx.strokeStyle = 'rgba(255,255,255,.6)';
-    ctx.lineWidth = 1.6;
+    ctx.setLineDash(attesa ? [] : [7, 6]);
+    ctx.strokeStyle = attesa ? 'rgba(255,202,71,' + (.55 + attesa * .45).toFixed(2) + ')' : 'rgba(255,255,255,.6)';
+    ctx.lineWidth = 1.6 + attesa * 2.4;
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     ctx.restore();
+    if (attesa > 0) {                       /* arco che si chiude accanto alla maniglia */
+      ctx.save();
+      ctx.strokeStyle = '#ffca47'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(W - 26 * UI, y, 11 * UI, -1.5708, -1.5708 + 6.2832 * attesa);
+      ctx.stroke();
+      ctx.restore();
+    }
     if (S.sea.locked) return;
     /* maniglia senza numeri: la quota non si legge, si legge dove finiscono le rive */
     ctx.fillStyle = 'rgba(9,32,50,.88)';
@@ -761,7 +770,7 @@
           S.sea.auto = false; revealRoots();
         });
       } else {
-        say('Alza il mare finché le rive arrivano sulle soluzioni di <b class="m">' + polyString(S.a, S.b, S.c) + ' = 0</b>');
+        say('Alza il mare finché le rive arrivano sulle soluzioni di <b class="m">' + polyString(S.a, S.b, S.c) + ' = 0</b>, poi tieni fermo un istante.');
         setActions([
           { label: '▼', fn: function () { nudge(-1); } },
           { label: '▲', fn: function () { nudge(1); } }
@@ -815,21 +824,18 @@
   }
   function setSea(y) {
     if (S.sea.locked) return;
-    var prev = S.sea.y;
-    y = clamp(y, S.sea.min, S.sea.max);
-    /* Aggancio stretto (5 px) e solo se il movimento è controllato: chi sventola il dito
-       e scavalca la quota zero NON aggancia, passa oltre e deve tornare indietro piano.
-       Il livello giusto va saputo, non trovato per caso. */
-    var salto = Math.abs(Y2P(y) - Y2P(prev));
-    var scavalca = (prev < 0 && y >= 0) || (prev > 0 && y <= 0);
-    var vicino = Math.abs(Y2P(y) - Y2P(0)) < 5;
-    if ((vicino || scavalca) && salto < 12) {
-      S.sea.y = 0;
-      revealRoots();
-    } else {
-      S.sea.y = y;
-      if (scavalca) flash('Troppo veloce: sei passato oltre', false);
-    }
+    S.sea.y = clamp(y, S.sea.min, S.sea.max);
+    /* Nessun aggancio mentre si passa: il mare si ferma dove lo lasci. L'aggancio arriva
+       solo se la linea RESTA sulla quota giusta per mezzo secondo (vedi tieniFermo). */
+    if (Math.abs(Y2P(S.sea.y) - Y2P(0)) < 7) {
+      if (S.sea.tocca == null) S.sea.tocca = CLOCK;
+    } else S.sea.tocca = null;
+  }
+
+  /* mezzo secondo fermi sulla quota giusta e le rive si agganciano */
+  function tieniFermo() {
+    if (S.phase !== 'sea' || S.sea.locked || S.sea.tocca == null) return;
+    if (CLOCK - S.sea.tocca >= 500) { S.sea.y = 0; revealRoots(); }
   }
 
   function revealRoots() {
@@ -1244,7 +1250,7 @@
     tweens.length = 0;      /* animazioni e attese della partita precedente: via, o fanno avanzare la fase da sole */
     solve();
     S.bend = { tL: 0, tR: 0, side: null, dragY0: 0, dragT0: 0, corsa: 0, dragging: false, touched: false, busy: false };
-    S.sea = { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 };
+    S.sea = { y: 0, min: 0, max: 0, tocca: null, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 };
     S.attempts = 0;
     S.hero = null; S.heroes = []; S.heroT = 0; S.bubbleT = 0;
     computeView();
@@ -1441,9 +1447,11 @@
         setSea(S.sea.y + (y > S.sea.y ? passo : -passo));
       }
       if (!S.sea.locked) setSea(y);
+      for (var h = 0; h < 8 && !S.sea.locked; h++) advance(100);   /* e resta fermo lì */
     },
     hero: function (kind) { chooseHero(kind); },
     tick: function (ms) { advance(ms || 16); },
+    hold: function (y, ms) { setSea(y); advance(16); advance(ms || 250); },   /* fermo lì, senza arrivare all'aggancio */
     size: function () { return { W: W, H: H }; },
     shot: function () { return cv.toDataURL('image/png'); },
     probeGround: function (px) { return ground(px); }
