@@ -294,10 +294,13 @@ h1 .sub{
   background:var(--gold);color:#241a00;border-color:transparent;
 }
 
-/* su schermo largo resta una colonna da telefono, centrata */
+/* su schermo grande la scena si allarga davvero: più spazio fra rive, cartelli e personaggi */
 @media (min-width:560px){
-  #app{left:50%;right:auto;width:520px;transform:translateX(-50%);
+  #app{left:50%;right:auto;width:min(100vw,1180px);transform:translateX(-50%);
        border-left:1px solid var(--line);border-right:1px solid var(--line)}
+  #axis-strip{height:72px}
+  .mark .lbl{font-size:17px}
+  #actions button{max-width:280px}
 }
 
 /* schermi bassi: comprimo un po' */

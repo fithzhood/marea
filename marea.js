@@ -77,13 +77,13 @@
     D: 0, r1: null, r2: null, nr: 0, xv: 0, yv: 0,
     zones: [], okZones: [], attempts: 0, fish: [], fishMax: 0,
     hero: null, heroes: [], heroT: 0, bubbleT: 0,
-    bend: { d: 0, target: 0, morph: 0, dragging: false, touched: false, busy: false },
+    bend: { d: 0, morph: 0, wrong: false, dragging: false, touched: false, busy: false },
     sea: { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 },
     trees: [],
     t: 0
   };
   var V = { x0: -5, x1: 5, y0: -5, y1: 5 };
-  var W = 0, H = 0;
+  var W = 0, H = 0, UI = 1;   /* UI: quanto ingrandire figure e scritte su schermi grandi */
 
   var stage = $('#stage'), cv = $('#scene'), ctx = cv.getContext('2d');
   var hintEl = $('#hint'), actionsEl = $('#actions'), calcEl = $('#calc');
@@ -139,16 +139,17 @@
   function P2X(p) { return V.x0 + p / W * (V.x1 - V.x0); }
   function P2Y(p) { return V.y0 + (H - p) / H * (V.y1 - V.y0); }
 
-  /* profilo del terreno in pixel, con la piega in corso */
+  /* Profilo del terreno in pixel. Durante la piega la barra non e' una curva a se':
+     e' gia' la parabola finale, presa a curvatura ridotta. A piega completa le due
+     coincidono esattamente, quindi il passaggio a paesaggio non ha nessuno scatto. */
   function ground(px) {
+    var par = Y2P(f(P2X(px)));
     if (S.phase === 'bend' || S.bend.morph < 1) {
-      var t = (px - W / 2) / (W / 2);
-      var bar = H * .5 + S.bend.d * (1 - t * t);
-      if (S.bend.morph <= 0) return bar;
-      var par = Y2P(f(P2X(px)));
-      return lerp(bar, par, easeInOut(S.bend.morph));
+      var flat = H * .5;
+      var meta = S.bend.wrong ? (2 * flat - par) : par;   /* piega al contrario: specchiata */
+      return lerp(flat, meta, clamp(S.bend.morph, 0, 1));
     }
-    return Y2P(f(P2X(px)));
+    return par;
   }
 
   /* ═══════════════ tween minimale ═══════════════ */
@@ -320,7 +321,7 @@
         x: 20 + Math.random() * Math.max(60, W - 40),
         depth: .16 + Math.random() * .68,
         v: (Math.random() < .5 ? -1 : 1) * (11 + Math.random() * 17),
-        s: 5.5 + Math.random() * 4,
+        s: (5.5 + Math.random() * 4) * UI,
         ph: Math.random() * 6.283,
         c: FISH_COLORS[i % FISH_COLORS.length],
         y: null, dry: 0
@@ -474,14 +475,15 @@
   function drawSigns() {
     var xs, esatto;
     if (S.phase === 'sea' && !S.sea.locked) { xs = shoreX(); esatto = false; }
-    else if (S.sea.revealed) {
-      xs = S.nr === 2 ? [S.r1, S.r2] : S.nr === 1 ? [S.r1] : [];
+    else if (S.sea.revealed && S.nr === 2) {
+      /* con una radice sola il cartello non aggiunge niente: c'e' gia' il pallino */
+      xs = [S.r1, S.r2];
       esatto = true;
     } else return;
     if (!xs.length) return;
 
     var y0 = Y2P(S.sea.y), i, k;
-    ctx.font = '700 14.5px ' + FONT;
+    ctx.font = '700 ' + (14.5 * UI).toFixed(1) + 'px ' + FONT;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     var pxs = [], labs = [];
     for (i = 0; i < xs.length; i++) {
@@ -491,14 +493,9 @@
     for (i = 0; i < xs.length; i++) {
       var px = pxs[i];
       if (px < -24 || px > W + 24) continue;
-      var alza = 0;
-      if (esatto) {                     /* se c'è un personaggio lì sotto, il palo si allunga */
-        for (k = 0; k < S.heroes.length; k++) {
-          if (Math.abs(S.heroes[k].x - px) < 34) alza = 52;   /* passa sopra la sua testa */
-        }
-      }
-      var wp = Math.max(30, ctx.measureText(labs[i]).width + 18);
-      var plateH = 22, top = y0 - 26 - plateH - alza;
+
+      var wp = Math.max(30 * UI, ctx.measureText(labs[i]).width + 18 * UI);
+      var plateH = 21 * UI, top = y0 - 12 * UI - plateH;   /* asta corta: il cartello sta sulla riva */
       /* due cartelli vicini: il secondo sale di un piano */
       if (xs.length === 2 && Math.abs(pxs[0] - pxs[1]) < wp + 10 && i === 1) top -= plateH + 7;
       var bx = clamp(px, wp / 2 + 3, W - wp / 2 - 3);
@@ -570,6 +567,7 @@
     var dpr = Math.min(window.devicePixelRatio || 1, 2.5);
     cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    UI = clamp(Math.min(W, H) / 420, 1, 1.7);
     computeView();
     layoutStrip();
     if (S.hero) placeHeroes();   /* le posizioni sono in pixel: vanno rifatte */
@@ -766,23 +764,28 @@
   /* ═══════════════ fase 1 — la piega ═══════════════ */
   function bendRelease() {
     var d = S.bend.d;
-    if (Math.abs(d) < 22) { tween(function () { return S.bend.d; }, function (v) { S.bend.d = v; }, 0, 260); return; }
+    var tornaDritta = function (ms) {
+      tween(function () { return S.bend.morph; }, function (v) { S.bend.morph = v; }, 0, ms, function () {
+        S.bend.d = 0; S.bend.wrong = false;
+      });
+    };
+    if (Math.abs(d) < 22) { tornaDritta(260); return; }
     var wantDown = S.a > 0;          /* a>0 → il centro scende → valle */
-    var isDown = d > 0;
-    if (isDown === wantDown) {
-      S.bend.busy = true;
+    if ((d > 0) === wantDown) {
+      S.bend.busy = true; S.bend.wrong = false;
       flash(wantDown ? 'Valle — concavità verso l’alto' : 'Collina — concavità verso il basso', true);
       buzz(18);
-      S.bend.d = clamp(d, -H * .34, H * .34);
-      tween(function () { return S.bend.morph; }, function (v) { S.bend.morph = v; }, 1, 900, function () {
-        S.bend.busy = false;
-        S.sea.y = S.sea.start;
-        setPhase('sea');
-      });
+      /* la forma e' gia' quella giusta: resta solo da finire di piegarla */
+      tween(function () { return S.bend.morph; }, function (v) { S.bend.morph = v; }, 1,
+        Math.round(700 * (1 - S.bend.morph) + 120), function () {
+          S.bend.busy = false;
+          S.sea.y = S.sea.start;
+          setPhase('sea');
+        });
     } else {
       flash('Con a = ' + fmtInt(S.a) + ' la piega va dall’altra parte', false);
       buzz([14, 60, 14]);
-      tween(function () { return S.bend.d; }, function (v) { S.bend.d = v; }, 0, 420);
+      tornaDritta(420);
     }
   }
 
@@ -916,15 +919,19 @@
       /* si prova a stare larghi dalle rive, dove vanno i cartelli; se in quella fascia
          il terreno esce dall'inquadratura si stringe, e in ultima istanza si accetta
          qualunque punto: una zona della soluzione deve SEMPRE avere il suo personaggio */
-      var best = spotInZone(xa, xb, z, isAlp, 26, false);
-      if (best == null) best = spotInZone(xa, xb, z, isAlp, 10, false);
-      if (best == null) best = spotInZone(xa, xb, z, isAlp, 4, true);
+      var margini = [44, 26, 12], best = null, usato = 0;
+      for (var mi = 0; mi < margini.length && best == null; mi++) {
+        best = spotInZone(xa, xb, z, isAlp, margini[mi], false);
+        usato = margini[mi];
+      }
+      if (best == null) { best = spotInZone(xa, xb, z, isAlp, 4, true); usato = 4; }
       if (best == null) continue;
+      var stretto = usato < 40;      /* poco spazio: rimpicciolisce per non coprire il cartello */
       var g2 = ground(best), deep = Math.min(g2, H) - ySea;
       S.heroes.push({
         x: best,
         y: isAlp ? g2 : ySea + Math.min(deep * .5, H * .16),
-        s: isAlp ? 1 : clamp(deep / 95, .62, 1),
+        s: (isAlp ? 1 : clamp(deep / 95, .62, 1)) * (stretto ? .78 : 1),
         text: zoneText(i)
       });
     }
@@ -1042,7 +1049,7 @@
   function drawBalloon(x, y, text, alpha) {
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.font = '600 12.5px ' + FONT;
+    ctx.font = '600 ' + (12.5 * UI).toFixed(1) + 'px ' + FONT;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     /* le frasi lunghe vanno su due righe, spezzate dove le due metà si pareggiano */
     var righe = [text], k;
@@ -1081,7 +1088,7 @@
       var h = S.heroes[i];
       var t = easeOut(clamp(S.heroT * 1.35 - i * .18, 0, 1));
       if (t <= 0) continue;
-      var s = 46 * h.s;
+      var s = 46 * h.s * UI;
       var aTerra = isAlp || h.standing;
       var bob = aTerra ? 0 : Math.sin(S.t * 1.5 + i * 2) * 3;
       ctx.save();
@@ -1177,7 +1184,11 @@
     var r = cv.getBoundingClientRect();
     var x = e.clientX - r.left, y = e.clientY - r.top;
     ptr.moved = Math.max(ptr.moved, Math.abs(x - ptr.x0) + Math.abs(y - ptr.y0));
-    if (S.bend.dragging) S.bend.d = clamp(S.bend.dragD0 + (y - S.bend.dragY0), -H * .34, H * .34);
+    if (S.bend.dragging) {
+      S.bend.d = clamp(S.bend.dragD0 + (y - S.bend.dragY0), -H * .34, H * .34);
+      S.bend.wrong = (S.bend.d > 0) !== (S.a > 0);
+      S.bend.morph = clamp(Math.abs(S.bend.d) / (H * .30), 0, 1);
+    }
     if (S.sea.dragging) {
       var perPx = (V.y1 - V.y0) / H;
       setSea(S.sea.dragS0 + (S.sea.dragY0 - y) * perPx);
@@ -1195,7 +1206,7 @@
   /* ═══════════════ avvio di un problema ═══════════════ */
   function startProblem() {
     solve();
-    S.bend = { d: 0, target: 0, morph: 0, dragging: false, touched: false, busy: false };
+    S.bend = { d: 0, morph: 0, wrong: false, dragging: false, touched: false, busy: false };
     S.sea = { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 };
     S.attempts = 0;
     S.hero = null; S.heroes = []; S.heroT = 0; S.bubbleT = 0;
@@ -1353,6 +1364,7 @@
     hero: function (kind) { chooseHero(kind); },
     tick: function (ms) { advance(ms || 16); },
     size: function () { return { W: W, H: H }; },
-    shot: function () { return cv.toDataURL('image/png'); }
+    shot: function () { return cv.toDataURL('image/png'); },
+    probeGround: function (px) { return ground(px); }
   };
 })();
