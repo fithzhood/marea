@@ -75,7 +75,8 @@
     phase: 'setup',           // setup | bend | sea | pick | done
     a: 1, b: -2, c: -3, op: '>',
     D: 0, r1: null, r2: null, nr: 0, xv: 0, yv: 0,
-    zones: [], okZones: [], picks: {}, attempts: 0, fish: [], fishMax: 0,
+    zones: [], okZones: [], attempts: 0, fish: [], fishMax: 0,
+    hero: null, heroes: [], heroT: 0, bubbleT: 0,
     bend: { d: 0, target: 0, morph: 0, dragging: false, touched: false, busy: false },
     sea: { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 },
     trees: [],
@@ -396,7 +397,8 @@
 
   /* linea della quota corrente + righello */
   function drawLevel() {
-    if (S.phase === 'bend' || S.phase === 'setup' || S.sea.locked) return;
+    if (S.phase === 'bend' || S.phase === 'setup') return;
+    if (S.sea.locked && !S.sea.auto) return;
     var y = Y2P(S.sea.y);
     ctx.save();
     ctx.setLineDash([7, 6]);
@@ -404,6 +406,7 @@
     ctx.lineWidth = 1.6;
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     ctx.restore();
+    if (S.sea.locked) return;
     /* maniglia senza numeri: la quota non si legge, si legge dove finiscono le rive */
     ctx.fillStyle = 'rgba(9,32,50,.88)';
     roundRect(9, y - 14, 30, 28, 9); ctx.fill();
@@ -455,13 +458,7 @@
       for (i = 0; i < S.zones.length; i++) {
         var z = S.zones[i];
         var xa = isFinite(z.lo) ? X2P(z.lo) : -2, xb = isFinite(z.hi) ? X2P(z.hi) : W + 2;
-        var on = !!S.picks[i], rgb = null;
-        if (S.phase === 'done') {
-          var right = S.okZones.indexOf(i) >= 0;
-          if (on && right) rgb = '78,192,106';
-          else if (on && !right) rgb = '239,106,90';
-          else if (!on && right) rgb = '255,202,71';
-        } else if (on) rgb = '78,192,106';
+        var rgb = (S.phase === 'done' && S.okZones.indexOf(i) >= 0) ? '78,192,106' : null;
         /* alone sfumato attorno all'asse: segnala la zona senza tingere il cielo */
         if (rgb) {
           var g2 = ctx.createLinearGradient(0, yz - band, 0, yz + band);
@@ -472,13 +469,6 @@
           ctx.fillRect(xa, yz - band, xb - xa, band * 2);
           ctx.fillStyle = 'rgb(' + rgb + ')';
           ctx.fillRect(xa + 1.5, yz - 6, xb - xa - 3, 12);
-        } else {
-          /* zona ancora da decidere (o scartata): uno slot vuoto sull'asse */
-          ctx.save();
-          ctx.setLineDash([6, 5]);
-          ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.6;
-          roundRect(xa + 3, yz - 6, Math.max(8, xb - xa - 6), 12, 4); ctx.stroke();
-          ctx.restore();
         }
       }
     }
@@ -534,6 +524,7 @@
     drawTrees();
     drawSea();
     drawZones();
+    drawHeroes();
     drawLevel();
     drawShores();
     drawHandle();
@@ -556,6 +547,7 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     computeView();
     layoutStrip();
+    if (S.hero) placeHeroes();   /* le posizioni sono in pixel: vanno rifatte */
   }
   window.addEventListener('resize', resize);
   if (window.ResizeObserver) new ResizeObserver(resize).observe(stage);
@@ -667,7 +659,7 @@
       var xa = isFinite(z.lo) ? X2P(z.lo) / W * sw : 0;
       var xb = isFinite(z.hi) ? X2P(z.hi) / W * sw : sw;
       var d = document.createElement('div');
-      d.className = 'zone' + (S.picks[i] ? ' picked' : '');
+      d.className = 'zone' + (S.phase === 'done' && S.okZones.indexOf(i) >= 0 ? ' picked' : '');
       d.style.left = (xa + 3) + 'px';
       d.style.width = Math.max(10, xb - xa - 6) + 'px';
       d.dataset.i = i;
@@ -684,10 +676,6 @@
       marksEl.appendChild(m);
     }
   }
-  zonesEl.addEventListener('click', function (e) {
-    var z = e.target.closest('.zone');
-    if (z && S.phase === 'pick') togglePick(+z.dataset.i);
-  });
 
   /* ═══════════════ interfaccia per fase ═══════════════ */
   function setActions(list) {
@@ -730,8 +718,10 @@
         /* niente radici, quindi niente rive su cui puntare: il mare va da sé */
         say('<b class="m">' + polyString(S.a, S.b, S.c) + ' = 0</b> non ha soluzioni: non c’è nessuna riva da cercare. Il mare sale da solo.');
         setActions([]);
-        S.sea.locked = true;
-        tween(function () { return S.sea.y; }, function (v) { S.sea.y = v; }, 0, 1500, revealRoots);
+        S.sea.locked = true; S.sea.auto = true;   /* bloccato al dito, ma la linea si vede salire */
+        tween(function () { return S.sea.y; }, function (v) { S.sea.y = v; }, 0, 1500, function () {
+          S.sea.auto = false; revealRoots();
+        });
       } else {
         say('Alza il mare finché le rive arrivano sulle soluzioni di <b class="m">' + polyString(S.a, S.b, S.c) + ' = 0</b>');
         setActions([
@@ -740,8 +730,11 @@
         ]);
       }
     } else if (p === 'pick') {
-      say('Tocca le zone che risolvono <b class="m">' + polyString(S.a, S.b, S.c) + ' ' + opSym(S.op) + ' 0</b>, poi conferma.');
-      setActions([{ label: 'Conferma', cls: 'primary', fn: check }]);
+      say('Chi mandi a cercare la soluzione di <b class="m">' + polyString(S.a, S.b, S.c) + ' ' + opSym(S.op) + ' 0</b>?');
+      setActions([
+        { label: '🧗 Alpinista', fn: function () { chooseHero('alp'); } },
+        { label: '🤿 Subacqueo', fn: function () { chooseHero('sub'); } }
+      ]);
     }
   }
 
@@ -809,40 +802,174 @@
   }
 
   /* ═══════════════ fase 3 — la scelta ═══════════════ */
-  function togglePick(i) {
-    if (S.phase !== 'pick') return;
-    S.picks[i] = !S.picks[i];
-    buzz(8);
-    layoutStrip();
-    var n = Object.keys(S.picks).filter(function (k) { return S.picks[k]; }).length;
-    setActions([{ label: n ? 'Conferma' : 'Nessuna zona: conferma', cls: 'primary', fn: check }]);
+  /* ═══════════════ i due personaggi ═══════════════ */
+  function art(v, prima) {
+    var intero = Math.abs(v - Math.round(v)) < 1e-9 && v > 0;
+    return prima ? (intero ? 'del ' : 'di ') : (intero ? 'il ' : '');
+  }
+  function zoneText(i) {
+    var z = S.zones[i];
+    if (!isFinite(z.lo) && !isFinite(z.hi)) return 'Io ci sto dappertutto';
+    if (!isFinite(z.lo)) return 'Io mi trovo prima ' + art(z.hi, true) + fmtNum(z.hi);
+    if (!isFinite(z.hi)) return 'Io mi trovo dopo ' + art(z.lo, false) + fmtNum(z.lo);
+    return 'Io mi trovo tra ' + fmtNum(z.lo) + ' e ' + fmtNum(z.hi);
+  }
+
+  function placeHeroes() {
+    S.heroes = [];
+    if (!S.hero) return;
+    var isAlp = S.hero === 'alp', ySea = Y2P(0), i, k;
+    for (i = 0; i < S.zones.length; i++) {
+      if (S.okZones.indexOf(i) < 0) continue;
+      var z = S.zones[i];
+      var xa = clamp(isFinite(z.lo) ? X2P(z.lo) : 0, 4, W - 4);
+      var xb = clamp(isFinite(z.hi) ? X2P(z.hi) : W, 4, W - 4);
+      var m = Math.min((xb - xa) * .2, W * .1);
+      /* margine anche dai bordi dello schermo, o il personaggio esce dall'inquadratura */
+      var lo = Math.max(xa + m, 30), hi = Math.min(xb - m, W - 30);
+      if (hi - lo < 8) { lo = clamp((xa + xb) / 2 - 4, 30, W - 38); hi = lo + 8; }
+      var best = null, bestScore = -1e9;
+      for (k = 0; k <= 20; k++) {
+        var px = lo + (hi - lo) * k / 20, gy = ground(px), score;
+        if (isAlp) {
+          if (gy < 52 || gy > H - 26) continue;                 /* terreno fuori vista */
+          score = -Math.abs(ground(px + 5) - ground(px - 5));    /* cerca il piano */
+        } else {
+          if (Math.min(gy, H) - ySea < 26) continue;             /* acqua troppo bassa */
+          score = Math.min(gy, H) - ySea;                        /* cerca il fondo */
+        }
+        if (score > bestScore) { bestScore = score; best = px; }
+      }
+      if (best == null) continue;
+      var g2 = ground(best), deep = Math.min(g2, H) - ySea;
+      S.heroes.push({
+        x: best,
+        y: isAlp ? g2 : ySea + Math.min(deep * .5, H * .16),
+        s: isAlp ? 1 : clamp(deep / 95, .62, 1),
+        text: zoneText(i)
+      });
+    }
+    if (S.heroes.length) return;
+    /* nessuna zona: il personaggio compare lo stesso e dice come stanno le cose */
+    var roots = S.nr === 2 ? [S.r1, S.r2] : S.nr === 1 ? [S.r1] : [];
+    var inc = (S.op === '>=' || S.op === '<=');
+    if (inc && roots.length === 1) {
+      S.heroes.push({ x: X2P(roots[0]), y: isAlp ? ground(X2P(roots[0])) : Y2P(0) + 14, s: .9,
+        text: 'Ci sto solo in ' + fmtNum(roots[0]) });
+    } else {
+      S.heroes.push({ x: W / 2, y: isAlp ? H * .3 : H * .3, s: .9, floating: true,
+        text: isAlp ? 'Qui non emerge niente!' : 'Qui non c’è acqua!' });
+    }
+  }
+
+  function drawClimber(s) {
+    var w = s * .34;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#2b3a55'; ctx.lineWidth = s * .1;
+    ctx.beginPath();
+    ctx.moveTo(-w * .38, 0); ctx.lineTo(-w * .2, -s * .34);
+    ctx.moveTo(w * .38, 0); ctx.lineTo(w * .16, -s * .34);
+    ctx.stroke();
+    ctx.fillStyle = '#8b5a2b'; roundRect(-w * .78, -s * .74, w * .55, s * .32, s * .05); ctx.fill();
+    ctx.fillStyle = '#e04b3a'; roundRect(-w * .44, -s * .76, w * .88, s * .44, s * .07); ctx.fill();
+    ctx.strokeStyle = '#e04b3a'; ctx.lineWidth = s * .09;
+    ctx.beginPath(); ctx.moveTo(w * .3, -s * .68); ctx.lineTo(w * .64, -s * .88); ctx.stroke();
+    ctx.strokeStyle = '#cfd6dd'; ctx.lineWidth = s * .045;
+    ctx.beginPath(); ctx.moveTo(w * .52, -s * .74); ctx.lineTo(w * .84, -s * 1.04);
+    ctx.moveTo(w * .84, -s * 1.04); ctx.lineTo(w * .6, -s * 1.02); ctx.stroke();
+    ctx.fillStyle = '#f0c9a0'; ctx.beginPath(); ctx.arc(0, -s * .88, s * .135, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = '#ffca47';
+    ctx.beginPath(); ctx.arc(0, -s * .90, s * .16, Math.PI, 0); ctx.fill();
+    ctx.fillRect(-s * .17, -s * .91, s * .34, s * .045);
+  }
+
+  function drawDiver(s) {
+    ctx.fillStyle = '#1b2a3a';
+    ctx.beginPath(); ctx.ellipse(-s * .02, 0, s * .34, s * .19, -.12, 0, 6.2832); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-s * .3, -s * .02); ctx.lineTo(-s * .62, -s * .18); ctx.lineTo(-s * .56, s * .12);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#9aa7b2'; roundRect(-s * .16, -s * .28, s * .3, s * .15, s * .05); ctx.fill();
+    ctx.fillStyle = '#1b2a3a'; ctx.beginPath(); ctx.arc(s * .32, -s * .07, s * .16, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = '#8ee6ff'; roundRect(s * .3, -s * .15, s * .2, s * .13, s * .04); ctx.fill();
+    ctx.strokeStyle = '#1b2a3a'; ctx.lineWidth = s * .085; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(s * .08, s * .04); ctx.lineTo(s * .3, s * .2); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    for (var b = 0; b < 3; b++) {
+      var ph = (S.t * .5 + b * .34) % 1;
+      ctx.beginPath();
+      ctx.arc(s * .46 + b * s * .07, -s * .22 - ph * s * .95, s * .055 * (1 - ph * .45), 0, 6.2832);
+      ctx.fill();
+    }
+  }
+
+  function drawBalloon(x, y, text, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = '600 12.5px ' + FONT;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    var wp = ctx.measureText(text).width + 20, hp = 26;
+    var bx = clamp(x, wp / 2 + 5, W - wp / 2 - 5), by = y;
+    ctx.fillStyle = 'rgba(255,255,255,.96)';
+    roundRect(bx - wp / 2, by - hp / 2, wp, hp, 9); ctx.fill();
+    ctx.beginPath();                                   /* codina verso il personaggio */
+    ctx.moveTo(clamp(x, bx - wp / 2 + 8, bx + wp / 2 - 8) - 5, by + hp / 2 - 1);
+    ctx.lineTo(clamp(x, bx - wp / 2 + 8, bx + wp / 2 - 8) + 5, by + hp / 2 - 1);
+    ctx.lineTo(x, by + hp / 2 + 9);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#123049'; ctx.fillText(text, bx, by + 1);
+    ctx.restore();
+  }
+
+  function drawHeroes() {
+    if (!S.hero || !S.heroes.length || S.heroT <= 0) return;
+    var isAlp = S.hero === 'alp', i, used = [];
+    for (i = 0; i < S.heroes.length; i++) {
+      var h = S.heroes[i];
+      var t = easeOut(clamp(S.heroT * 1.35 - i * .18, 0, 1));
+      if (t <= 0) continue;
+      var s = 46 * h.s;
+      var bob = isAlp && !h.floating ? 0 : Math.sin(S.t * 1.5 + i * 2) * 3;
+      ctx.save();
+      ctx.globalAlpha = t;
+      ctx.translate(h.x, h.y + bob - (1 - t) * 30);
+      if (isAlp) drawClimber(s); else drawDiver(s);
+      ctx.restore();
+      /* fumetto sopra la testa, scansato se due si accavallano */
+      if (S.bubbleT > 0) {
+        var by = h.y + bob - (isAlp ? s * 1.15 : s * .55) - 14;
+        for (var k = 0; k < used.length; k++) {
+          if (Math.abs(used[k].x - h.x) < 150 && Math.abs(used[k].y - by) < 30) by = used[k].y - 34;
+        }
+        by = clamp(by, 20, H - 20);
+        used.push({ x: h.x, y: by });
+        drawBalloon(h.x, by, h.text, S.bubbleT * t);
+      }
+    }
+  }
+
+  /* ═══════════════ fase 3 — chi va a cercare la soluzione ═══════════════ */
+  function chooseHero(kind) {
+    var wantPos = (S.op === '>' || S.op === '>=');
+    if ((kind === 'alp') !== wantPos) {
+      S.attempts++;
+      buzz([14, 60, 14]);
+      flash(kind === 'alp' ? 'L’alpinista cammina all’asciutto' : 'Il subacqueo sta sott’acqua', false);
+      say(kind === 'alp'
+        ? 'L’alpinista sta dove il terreno è <b>sopra</b> il pelo dell’acqua, cioè dove <b class="m">' + polyString(S.a, S.b, S.c) + '</b> è <b>positivo</b>. È quello che chiede <b class="m">' + polyString(S.a, S.b, S.c) + ' ' + opSym(S.op) + ' 0</b>?'
+        : 'Il subacqueo sta dove il terreno è <b>sotto</b> il pelo dell’acqua, cioè dove <b class="m">' + polyString(S.a, S.b, S.c) + '</b> è <b>negativo</b>. È quello che chiede <b class="m">' + polyString(S.a, S.b, S.c) + ' ' + opSym(S.op) + ' 0</b>?');
+      return;
+    }
+    S.hero = kind;
+    placeHeroes();
+    buzz(30);
+    flash('Esatto!', true);
+    tween(function () { return S.heroT; }, function (v) { S.heroT = v; }, 1, 650);
+    tween(function () { return S.bubbleT; }, function (v) { S.bubbleT = v; }, 1, 900);
+    check();
   }
 
   function check() {
-    var chosen = [], i;
-    for (i = 0; i < S.zones.length; i++) if (S.picks[i]) chosen.push(i);
-    var right = chosen.length === S.okZones.length &&
-      chosen.every(function (z) { return S.okZones.indexOf(z) >= 0; });
-
-    if (!right) {
-      S.attempts++;
-      buzz([14, 60, 14]);
-      document.querySelectorAll('.zone').forEach(function (el) {
-        var i = +el.dataset.i, on = !!S.picks[i], ok = S.okZones.indexOf(i) >= 0;
-        if (on !== ok) { el.classList.add('wrong'); setTimeout(function () { el.classList.remove('wrong'); }, 420); }
-      });
-      var wantPos = (S.op === '>' || S.op === '>=');
-      if (S.attempts === 1) flash('Non ci siamo. Riguarda il verso della disequazione.', false);
-      else {
-        flash(wantPos ? 'Cerca il terreno EMERSO' : 'Cerca il terreno SOMMERSO', false);
-        say('<b class="m">' + polyString(S.a, S.b, S.c) + ' ' + opSym(S.op) + ' 0</b> chiede dove la quota del terreno è ' +
-          (wantPos ? 'positiva: la terra <b>sopra</b> il pelo dell’acqua.' : 'negativa: il fondale <b>sotto</b> il pelo dell’acqua.'));
-      }
-      return;
-    }
-
-    buzz(30);
-    flash('Esatto!', true);
     var parts = buildSolution();
     calcEl.innerHTML =
       '<div class="row"><span>Δ</span><span>' + fmtInt(S.D) + (S.nr === 2 ? ' > 0' : S.nr === 1 ? ' = 0' : ' < 0') + '</span></div>' +
@@ -891,13 +1018,6 @@
     ptr.down = false;
     if (S.bend.dragging) { S.bend.dragging = false; bendRelease(); }
     if (S.sea.dragging) S.sea.dragging = false;
-    if (S.phase === 'pick' && ptr.moved < 12) {
-      var xw = P2X(ptr.x0);
-      for (var i = 0; i < S.zones.length; i++) {
-        var z = S.zones[i];
-        if (xw > (isFinite(z.lo) ? z.lo : -1e9) && xw < (isFinite(z.hi) ? z.hi : 1e9)) { togglePick(i); break; }
-      }
-    }
   }
   cv.addEventListener('pointerup', endPointer);
   cv.addEventListener('pointercancel', endPointer);
@@ -907,7 +1027,8 @@
     solve();
     S.bend = { d: 0, target: 0, morph: 0, dragging: false, touched: false, busy: false };
     S.sea = { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 };
-    S.picks = {}; S.attempts = 0;
+    S.attempts = 0;
+    S.hero = null; S.heroes = []; S.heroT = 0; S.bubbleT = 0;
     computeView();
     S.sea.y = S.sea.start;
     spawnFish();
@@ -1023,7 +1144,7 @@
     setup: ['Come funziona', '<p>Scegli i tre coefficienti e il verso. Poi pieghi una barra fino a farne una parabola, alzi il mare e decidi quali zone tenere.</p>'],
     bend: ['La concavità', '<p>Il coefficiente <span class="m">a</span> decide come si piega la parabola: se <span class="m">a &gt; 0</span> la concavità è verso l’alto (una valle), se <span class="m">a &lt; 0</span> è verso il basso (una collina).</p><p>Qui <span class="m">a = {A}</span>.</p>'],
     sea: ['Dove fermare il mare', '<p>Le <b>rive</b> sono i punti in cui il pelo dell’acqua incontra il terreno, e sotto ognuna trovi la sua <span class="m">x</span>. Il mare è al posto giusto quando quelle due <span class="m">x</span> sono le soluzioni di <span class="m">{EQ} = 0</span>: lì l’acqua è a quota zero, e la disequazione con zero si confronta.</p><p>Se non le hai ancora calcolate: <span class="m">Δ = b² − 4ac = {DELTA}</span>, e <span class="m">x = (−b ± √Δ) / 2a = {ROOTS}</span>.</p>'],
-    pick: ['Quali zone', '<p>Il verso dice cosa cercare: <span class="m">&gt; 0</span> vuol dire terreno <b>sopra</b> il pelo dell’acqua, <span class="m">&lt; 0</span> terreno <b>sotto</b>.</p><p>Con <span class="m">≥</span> e <span class="m">≤</span> anche le rive fanno parte della soluzione: i pallini sono pieni.</p>'],
+    pick: ['Alpinista o subacqueo', '<p>L’<b>alpinista</b> cammina sulla terra emersa, cioè dove la quota è <span class="m">positiva</span>. Il <b>subacqueo</b> nuota sotto il pelo dell’acqua, dove la quota è <span class="m">negativa</span>.</p><p>Guarda il verso: <span class="m">&gt;</span> o <span class="m">≥</span> chiedono dove il polinomio è positivo, <span class="m">&lt;</span> o <span class="m">≤</span> dove è negativo. Poi il personaggio si sistema da solo e ti dice dove si trova.</p><p>Con <span class="m">≥</span> e <span class="m">≤</span> anche le rive fanno parte della soluzione: i pallini sono pieni.</p>'],
     done: ['Il risultato', '<p>Le zone verdi sono quelle che risolvono la disequazione. Sotto trovi la soluzione scritta come disuguaglianza e come intervalli.</p>']
   };
   $('#btn-help').addEventListener('click', function () {
@@ -1059,8 +1180,7 @@
     play: function (a, b, c, op) { S.a = a; S.b = b; S.c = c; S.op = op; startProblem(); },
     bend: function (d) { S.bend.d = d; bendRelease(); },
     sea: function (y) { setSea(y); },
-    pickZone: function (i) { togglePick(i); },
-    confirm: function () { check(); },
+    hero: function (kind) { chooseHero(kind); },
     tick: function (ms) { advance(ms || 16); },
     size: function () { return { W: W, H: H }; },
     shot: function () { return cv.toDataURL('image/png'); }
