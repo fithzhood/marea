@@ -84,7 +84,7 @@
     D: 0, r1: null, r2: null, nr: 0, xv: 0, yv: 0,
     zones: [], okZones: [], attempts: 0, fish: [], fishMax: 0,
     hero: null, heroes: [], heroT: 0, bubbleT: 0,
-    bend: { d: 0, morph: 0, wrong: false, dragging: false, touched: false, busy: false },
+    bend: { tL: 0, tR: 0, side: null, dragY0: 0, dragT0: 0, corsa: 0, dragging: false, touched: false, busy: false },
     sea: { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 },
     trees: [],
     t: 0
@@ -146,15 +146,17 @@
   function P2X(p) { return V.x0 + p / W * (V.x1 - V.x0); }
   function P2Y(p) { return V.y0 + (H - p) / H * (V.y1 - V.y0); }
 
-  /* Profilo del terreno in pixel. Durante la piega la barra non e' una curva a se':
-     e' gia' la parabola finale, presa a curvatura ridotta. A piega completa le due
-     coincidono esattamente, quindi il passaggio a paesaggio non ha nessuno scatto. */
+  /* Profilo del terreno in pixel. La barra di partenza NON è a metà schermo: sta già
+     alla quota del vertice, cioè sulla tangente orizzontale della parabola. Piegando i
+     due rami (indipendenti) ciascuno scivola sulla parabola vera, quindi la forma è
+     sovrapponibile alla montagna in ogni istante e non trasla mai su o giù. */
   function ground(px) {
     var par = Y2P(f(P2X(px)));
-    if (S.phase === 'bend' || S.bend.morph < 1) {
-      var flat = H * .5;
-      var meta = S.bend.wrong ? (2 * flat - par) : par;   /* piega al contrario: specchiata */
-      return lerp(flat, meta, clamp(S.bend.morph, 0, 1));
+    if (S.phase === 'bend' || S.bend.tL < 1 || S.bend.tR < 1) {
+      var flat = Y2P(S.yv);
+      var t = (px < W / 2) ? S.bend.tL : S.bend.tR;
+      var meta = t < 0 ? (2 * flat - par) : par;    /* segno negativo = piegato al contrario */
+      return lerp(flat, meta, Math.abs(clamp(t, -1, 1)));
     }
     return par;
   }
@@ -221,7 +223,7 @@
   }
 
   function drawGround() {
-    var m = S.bend.morph;
+    var m = (Math.abs(S.bend.tL) + Math.abs(S.bend.tR)) / 2;
     /* corpo del terreno */
     if (m > 0) {
       ctx.save(); ctx.globalAlpha = m;
@@ -254,8 +256,9 @@
   }
 
   function drawTrees() {
-    if (S.bend.morph < .55) return;
-    ctx.save(); ctx.globalAlpha = (S.bend.morph - .55) / .45;
+    var mm = (Math.abs(S.bend.tL) + Math.abs(S.bend.tR)) / 2;
+    if (mm < .55) return;
+    ctx.save(); ctx.globalAlpha = (mm - .55) / .45;
     for (var i = 0; i < S.trees.length; i++) {
       var tx = X2P(S.trees[i].x), gy = ground(tx);
       if (gy < -30 || gy > H + 30) continue;
@@ -515,20 +518,24 @@
     }
   }
 
-  /* maniglia della piega */
+  /* maniglie: una per ramo, alle due estremità della barra */
   function drawHandle() {
     if (S.phase !== 'bend' || S.bend.busy) return;
-    var y = ground(W / 2), pulse = S.bend.touched ? 0 : (Math.sin(S.t * 3) * .5 + .5);
-    ctx.save();
-    ctx.globalAlpha = .55 + pulse * .45;
-    ctx.fillStyle = 'rgba(13,34,51,.9)';
-    ctx.beginPath(); ctx.arc(W / 2, y, 21, 0, 6.2832); ctx.fill();
-    ctx.strokeStyle = '#ffca47'; ctx.lineWidth = 2.4; ctx.stroke();
-    ctx.fillStyle = '#ffca47'; ctx.font = '700 12px ' + FONT;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('▲', W / 2, y - 8);
-    ctx.fillText('▼', W / 2, y + 9);
-    ctx.restore();
+    var pulse = S.bend.touched ? 0 : (Math.sin(S.t * 3) * .5 + .5);
+    [['L', W * .18, S.bend.tL], ['R', W * .82, S.bend.tR]].forEach(function (m) {
+      if (m[2] >= 1) return;                      /* ramo già piegato: la maniglia sparisce */
+      var x = m[1], y = clamp(ground(x), 26, H - 26), r = 21 * UI;
+      ctx.save();
+      ctx.globalAlpha = .55 + pulse * .45;
+      ctx.fillStyle = 'rgba(13,34,51,.9)';
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fill();
+      ctx.strokeStyle = '#ffca47'; ctx.lineWidth = 2.4; ctx.stroke();
+      ctx.fillStyle = '#ffca47'; ctx.font = '700 ' + (12 * UI).toFixed(0) + 'px ' + FONT;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('▲', x, y - r * .38);
+      ctx.fillText('▼', x, y + r * .42);
+      ctx.restore();
+    });
   }
 
   function roundRect(x, y, w, h, r) {
@@ -742,7 +749,7 @@
     if (p === 'pick' || p === 'done') layoutStrip();
 
     if (p === 'bend') {
-      say('Piega la barra: deve diventare il grafico di <b class="m">y = ' + polyString(S.a, S.b, S.c) + '</b>');
+      say('Piega i due lati della barra: deve diventare il grafico di <b class="m">y = ' + polyString(S.a, S.b, S.c) + '</b>');
       setActions([{ label: 'Cambia disequazione', cls: 'ghost', fn: openSetup }]);
     } else if (p === 'sea') {
       if (S.nr === 0) {
@@ -771,30 +778,33 @@
 
   /* ═══════════════ fase 1 — la piega ═══════════════ */
   function bendRelease() {
-    var d = S.bend.d;
-    var tornaDritta = function (ms) {
-      tween(function () { return S.bend.morph; }, function (v) { S.bend.morph = v; }, 0, ms, function () {
-        S.bend.d = 0; S.bend.wrong = false;
-      });
-    };
-    if (Math.abs(d) < 22) { tornaDritta(260); return; }
-    var wantDown = S.a > 0;          /* a>0 → il centro scende → valle */
-    if ((d > 0) === wantDown) {
-      S.bend.busy = true; S.bend.wrong = false;
-      flash(wantDown ? 'Valle — concavità verso l’alto' : 'Collina — concavità verso il basso', true);
-      buzz(18);
-      /* la forma e' gia' quella giusta: resta solo da finire di piegarla */
-      tween(function () { return S.bend.morph; }, function (v) { S.bend.morph = v; }, 1,
-        Math.round(700 * (1 - S.bend.morph) + 120), function () {
+    var lato = S.bend.side, chiave = (lato === 'L') ? 'tL' : 'tR';
+    var t = S.bend[chiave];
+    var set = function (v) { S.bend[chiave] = v; };
+    var get = function () { return S.bend[chiave]; };
+
+    if (t < -0.12) {                       /* piegato dalla parte sbagliata */
+      flash('Con a = ' + fmtInt(S.a) + ' il ramo va dall’altra parte', false);
+      buzz([14, 60, 14]);
+      tween(get, set, 0, 380);
+      return;
+    }
+    if (t < .55) { tween(get, set, 0, 260); return; }    /* piegato troppo poco */
+
+    buzz(14);
+    tween(get, set, 1, Math.round(420 * (1 - t) + 100), function () {
+      set(1);
+      if (S.bend.tL >= 1 && S.bend.tR >= 1) {            /* tutti e due i rami a posto */
+        S.bend.busy = true;
+        flash(S.a > 0 ? 'Valle — concavità verso l’alto' : 'Collina — concavità verso il basso', true);
+        buzz(18);
+        after(650, function () {
           S.bend.busy = false;
           S.sea.y = S.sea.start;
           setPhase('sea');
         });
-    } else {
-      flash('Con a = ' + fmtInt(S.a) + ' la piega va dall’altra parte', false);
-      buzz([14, 60, 14]);
-      tornaDritta(420);
-    }
+      }
+    });
   }
 
   /* ═══════════════ fase 2 — la marea ═══════════════ */
@@ -1192,7 +1202,13 @@
     ptr.down = true; ptr.x0 = e.clientX - r.left; ptr.y0 = e.clientY - r.top; ptr.moved = 0;
     if (S.phase === 'bend' && !S.bend.busy) {
       S.bend.dragging = true; S.bend.touched = true;
-      S.bend.dragY0 = ptr.y0; S.bend.dragD0 = S.bend.d;
+      S.bend.side = (ptr.x0 < W / 2) ? 'L' : 'R';
+      S.bend.dragY0 = ptr.y0;
+      S.bend.dragT0 = (S.bend.side === 'L') ? S.bend.tL : S.bend.tR;
+      /* quanto deve salire (o scendere) il punto toccato per completare il ramo */
+      var flat0 = Y2P(S.yv), fin = Y2P(f(P2X(clamp(ptr.x0, 8, W - 8))));
+      S.bend.corsa = fin - flat0;
+      if (Math.abs(S.bend.corsa) < 70) S.bend.corsa = (S.bend.corsa < 0 ? -70 : 70);
     }
     if (S.phase === 'sea' && !S.sea.locked) {
       S.sea.dragging = true; S.sea.dragY0 = ptr.y0; S.sea.dragS0 = S.sea.y;
@@ -1204,9 +1220,10 @@
     var x = e.clientX - r.left, y = e.clientY - r.top;
     ptr.moved = Math.max(ptr.moved, Math.abs(x - ptr.x0) + Math.abs(y - ptr.y0));
     if (S.bend.dragging) {
-      S.bend.d = clamp(S.bend.dragD0 + (y - S.bend.dragY0), -H * .34, H * .34);
-      S.bend.wrong = (S.bend.d > 0) !== (S.a > 0);
-      S.bend.morph = clamp(Math.abs(S.bend.d) / (H * .30), 0, 1);
+      /* il punto toccato segue il dito: quando arriva dove lo vuole la parabola, il ramo è fatto */
+      var t = S.bend.dragT0 + (y - S.bend.dragY0) / S.bend.corsa;
+      t = clamp(t, -1, 1);
+      if (S.bend.side === 'L') S.bend.tL = t; else S.bend.tR = t;
     }
     if (S.sea.dragging) {
       var perPx = (V.y1 - V.y0) / H;
@@ -1226,7 +1243,7 @@
   function startProblem() {
     tweens.length = 0;      /* animazioni e attese della partita precedente: via, o fanno avanzare la fase da sole */
     solve();
-    S.bend = { d: 0, morph: 0, wrong: false, dragging: false, touched: false, busy: false };
+    S.bend = { tL: 0, tR: 0, side: null, dragY0: 0, dragT0: 0, corsa: 0, dragging: false, touched: false, busy: false };
     S.sea = { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 };
     S.attempts = 0;
     S.hero = null; S.heroes = []; S.heroT = 0; S.bubbleT = 0;
@@ -1369,7 +1386,7 @@
   /* ═══════════════ aiuto ═══════════════ */
   var HELP = {
     setup: ['Come funziona', '<p>Scegli i tre coefficienti e il verso. Poi pieghi una barra fino a farne una parabola, alzi il mare e decidi quali zone tenere.</p>'],
-    bend: ['La concavità', '<p>Il coefficiente <span class="m">a</span> decide come si piega la parabola: se <span class="m">a &gt; 0</span> la concavità è verso l’alto (una valle), se <span class="m">a &lt; 0</span> è verso il basso (una collina).</p><p>Qui <span class="m">a = {A}</span>.</p>'],
+    bend: ['La concavità', '<p>La barra parte appoggiata sul <b>vertice</b>: da lì i due rami vanno piegati, uno per volta o come preferisci.</p><p>Il coefficiente <span class="m">a</span> decide da che parte: se <span class="m">a &gt; 0</span> la concavità è verso l’alto (una valle) e i rami salgono, se <span class="m">a &lt; 0</span> è verso il basso (una collina) e i rami scendono.</p><p>Qui <span class="m">a = {A}</span>.</p>'],
     sea: ['Dove fermare il mare', '<p>Le <b>rive</b> sono i punti in cui il pelo dell’acqua incontra il terreno, e sotto ognuna trovi la sua <span class="m">x</span>. Il mare è al posto giusto quando quelle due <span class="m">x</span> sono le soluzioni di <span class="m">{EQ} = 0</span>: lì l’acqua è a quota zero, e la disequazione con zero si confronta.</p><p>Se non le hai ancora calcolate: <span class="m">Δ = b² − 4ac = {DELTA}</span>, e <span class="m">x = (−b ± √Δ) / 2a = {ROOTS}</span>.</p>'],
     pick: ['Alpinista o subacqueo', '<p>L’<b>alpinista</b> cammina sulla terra emersa, cioè dove la quota è <span class="m">positiva</span>. Il <b>subacqueo</b> nuota sotto il pelo dell’acqua, dove la quota è <span class="m">negativa</span>.</p><p>Guarda il verso: <span class="m">&gt;</span> o <span class="m">≥</span> chiedono dove il polinomio è positivo, <span class="m">&lt;</span> o <span class="m">≤</span> dove è negativo. Poi il personaggio si sistema da solo e ti dice dove si trova.</p><p>Con <span class="m">≥</span> e <span class="m">≤</span> anche le rive fanno parte della soluzione: i pallini sono pieni.</p>'],
     done: ['Il risultato', '<p>Le zone verdi sono quelle che risolvono la disequazione. Sotto trovi la soluzione scritta come disuguaglianza e come intervalli.</p>']
@@ -1406,7 +1423,17 @@
       return { D: S.D, nr: S.nr, r1: S.r1, r2: S.r2, ok: S.okZones.slice(), txt: solutionText(p), iv: intervalText(p) };
     },
     play: function (a, b, c, op) { S.a = a; S.b = b; S.c = c; S.op = op; startProblem(); },
-    bend: function (d) { S.bend.d = d; bendRelease(); },
+    bend: function () {                      /* piega bene tutti e due i rami */
+      S.bend.side = 'L'; S.bend.tL = 1; bendRelease();
+      S.bend.side = 'R'; S.bend.tR = 1; bendRelease();
+    },
+    bendWrong: function () {                 /* piega un ramo dalla parte sbagliata */
+      S.bend.side = 'L'; S.bend.tL = -.8; bendRelease();
+    },
+    bendArm: function (lato, t) {            /* un ramo solo, quanto si vuole */
+      S.bend.side = lato; if (lato === 'L') S.bend.tL = t; else S.bend.tR = t;
+      bendRelease();
+    },
     sea: function (y) {
       /* sale a passetti come farebbe un dito, così passa il controllo di velocità */
       var passo = (V.y1 - V.y0) * .01, g = 0;
