@@ -292,7 +292,9 @@
   function drawSea() {
     if (S.phase === 'bend' || S.phase === 'setup') return;
     seaProfile();
-    var base = Y2P(S.sea.y);
+    var base = Y2P(S.sea.y), px, i;
+
+    /* 1. l'acqua vera, dove non c'è terra: piena e profonda */
     waterPath();
     var g = ctx.createLinearGradient(0, base, 0, H);
     g.addColorStop(0, 'rgba(23,150,150,.93)');
@@ -303,13 +305,25 @@
     /* i pesci nuotano ritagliati dentro l'acqua: non possono uscirne mai */
     ctx.save(); waterPath(); ctx.clip(); drawFish(); ctx.restore();
 
-    /* superficie: solo nei tratti dove l'acqua esiste davvero, non sopra la terraferma */
+    /* 2. l'acqua passa DAVANTI anche alla terra: sotto il livello il terreno resta
+       visibile, ma in trasparenza, come guardando dentro un acquario */
+    ctx.save();
+    groundPath();
+    ctx.lineTo(W + 4, H + 60); ctx.lineTo(-4, H + 60); ctx.closePath();
+    ctx.clip();
+    var g2 = ctx.createLinearGradient(0, base, 0, H);
+    g2.addColorStop(0, 'rgba(26,152,152,.52)');
+    g2.addColorStop(.5, 'rgba(11,97,124,.60)');
+    g2.addColorStop(1, 'rgba(4,38,58,.68)');
+    ctx.fillStyle = g2;
+    ctx.fillRect(-4, base, W + 8, H - base + 60);
+    ctx.restore();
+
+    /* 3. la superficie attraversa tutta la scena: il livello si legge sempre */
     ctx.beginPath();
-    var open = false, px, i = 0;
+    i = 0;
     for (px = -4; px <= W + 4; px += 4, i++) {
-      if (seaBot[i] - seaTop[i] > 1.5) {
-        if (!open) { ctx.moveTo(px, seaTop[i]); open = true; } else ctx.lineTo(px, seaTop[i]);
-      } else open = false;
+      if (i === 0) ctx.moveTo(px, seaTop[i]); else ctx.lineTo(px, seaTop[i]);
     }
     ctx.strokeStyle = 'rgba(222,248,255,.95)'; ctx.lineWidth = 2.4; ctx.stroke();
   }
