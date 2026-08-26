@@ -809,10 +809,25 @@
   }
   function zoneText(i) {
     var z = S.zones[i];
-    if (!isFinite(z.lo) && !isFinite(z.hi)) return 'Io ci sto dappertutto';
+    if (!isFinite(z.lo) && !isFinite(z.hi)) return tuttoText();
     if (!isFinite(z.lo)) return 'Io mi trovo prima ' + art(z.hi, true) + fmtNum(z.hi);
     if (!isFinite(z.hi)) return 'Io mi trovo dopo ' + art(z.lo, false) + fmtNum(z.lo);
     return 'Io mi trovo tra ' + fmtNum(z.lo) + ' e ' + fmtNum(z.hi);
+  }
+
+  function tuttoText() {
+    return S.hero === 'alp' ? 'Evviva: è tutta montagna!' : 'Evviva: è tutto sott’acqua!';
+  }
+
+  /* il punto con più acqua sopra la testa */
+  function deepSpot() {
+    var ySea = Y2P(0), best = W / 2, bestD = -1e9;
+    for (var k = 0; k <= 24; k++) {
+      var px = 34 + (W - 68) * k / 24;
+      var d = Math.min(ground(px), H) - ySea;
+      if (d > bestD) { bestD = d; best = px; }
+    }
+    return { x: best, d: bestD };
   }
 
   /* il punto di terreno più pianeggiante fra quelli in vista */
@@ -831,6 +846,21 @@
     S.heroes = [];
     if (!S.hero) return;
     var isAlp = S.hero === 'alp', ySea = Y2P(0), i, k;
+
+    /* se la soluzione è tutta la retta basta un personaggio solo: con Δ = 0 le zone
+       sono due ma il punto in mezzo è incluso, e due fumetti direbbero una mezza verità */
+    var parts = buildSolution();
+    if (parts.length === 1 && !isFinite(parts[0].lo) && !isFinite(parts[0].hi)) {
+      if (isAlp) {
+        var fx = flatSpot();
+        S.heroes.push({ x: fx, y: ground(fx), s: 1, text: tuttoText() });
+      } else {
+        var dp = deepSpot();
+        S.heroes.push({ x: dp.x, y: ySea + Math.min(dp.d * .5, H * .16),
+          s: clamp(dp.d / 95, .62, 1), text: tuttoText() });
+      }
+      return;
+    }
     for (i = 0; i < S.zones.length; i++) {
       if (S.okZones.indexOf(i) < 0) continue;
       var z = S.zones[i];
@@ -872,11 +902,15 @@
       /* nessun posto dove stare: resta in piedi sul terreno, scontento */
       var spot = flatSpot(), gy = ground(spot);
       var y = (gy > 40 && gy < H - 20) ? gy : H * .62;
+      /* con Δ = 0 la parabola lo zero lo tocca, in un punto solo: dirlo com'è */
+      var sfiora = (roots.length === 1);
       S.heroes.push({
         x: spot, y: y, s: 1, standing: true, sad: true,
         underwater: isAlp && y > Y2P(0),        /* l'alpinista senza montagne è sott'acqua */
-        text: isAlp ? 'Qui non c’è nessuna montagna… blub blub!'
-                    : 'Qui non c’è acqua da nessuna parte'
+        text: isAlp ? (sfiora ? 'Emerge solo la punta: niente da scalare!'
+                              : 'Qui non c’è nessuna montagna… blub blub!')
+                    : (sfiora ? 'L’acqua qui è profonda zero!'
+                              : 'Qui non c’è acqua da nessuna parte')
       });
     }
   }
