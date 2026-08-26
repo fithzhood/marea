@@ -81,8 +81,10 @@ button{
 .hud-btns button:active{background:rgba(255,255,255,.2)}
 
 /* scena */
-/* la scena non deve mai sparire, nemmeno se il pannello cresce (testi grandi) */
-#stage{position:relative;flex:1 1 auto;min-height:36vh;overflow:hidden;background:var(--sky-top)}
+/* La scena ha un'altezza FISSA in percentuale dell'app: i pannelli che cambiano da una
+   fase all'altra si prendono lo spazio rimasto, così il disegno non si ridimensiona mai
+   e la parabola resta ferma dove sta. */
+#stage{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;background:var(--sky-top)}
 #scene{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
 
 #flash{
@@ -99,26 +101,33 @@ button{
 
 /* striscia asse x */
 #axis-strip{
-  position:relative;flex:0 0 auto;height:64px;
+  position:relative;flex:0 0 64px;visibility:hidden;   /* spazio sempre riservato: la scena non si muove */
   background:var(--panel-2);
   border-top:1px solid var(--line);
   overflow:hidden;
 }
 #axis-line{
-  position:absolute;left:0;right:0;top:20px;height:2px;
-  background:rgba(255,255,255,.28);
+  position:absolute;left:14px;right:14px;top:26px;height:2px;
+  background:rgba(255,255,255,.5);border-radius:2px;
 }
+/* la retta continua oltre lo schermo: due punte agli estremi */
+#axis-line::before,#axis-line::after{
+  content:'';position:absolute;top:-4px;width:0;height:0;
+  border-top:5px solid transparent;border-bottom:5px solid transparent;
+}
+#axis-line::before{left:-8px;border-right:9px solid rgba(255,255,255,.5)}
+#axis-line::after{right:-8px;border-left:9px solid rgba(255,255,255,.5)}
+
 #axis-zones{position:absolute;inset:0}
+/* i tratti di soluzione: spessi sulla retta, come si segnano a mano */
 .zone{
-  position:absolute;top:10px;height:22px;
-  border-radius:6px;
-  background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.22);
-  transition:background .18s,border-color .18s;
+  position:absolute;top:22px;height:10px;border-radius:5px;
+  background:transparent;
+  transition:background .25s;
 }
 .zone.picked{
-  background:rgba(78,192,106,.42);
-  border:1.5px solid var(--good);
+  background:var(--good);
+  box-shadow:0 0 12px rgba(78,192,106,.45);
 }
 .zone.wrong{animation:shake .4s}
 @keyframes shake{
@@ -128,26 +137,33 @@ button{
 }
 #axis-marks{position:absolute;inset:0;pointer-events:none}
 .mark{
-  position:absolute;top:14px;transform:translateX(-50%);
+  position:absolute;top:19px;transform:translateX(-50%);
   display:flex;flex-direction:column;align-items:center;
 }
 .mark .dot{
-  width:14px;height:14px;border-radius:50%;
-  border:2.5px solid var(--gold);background:var(--panel-2);
+  width:16px;height:16px;border-radius:50%;
+  border:3px solid var(--gold);background:var(--panel-2);
+  box-shadow:0 0 0 3px var(--panel-2);
 }
 .mark .dot.full{background:var(--gold)}
 .mark .lbl{
-  margin-top:6px;font-family:var(--math);font-size:15px;font-weight:700;
+  margin-top:7px;font-family:var(--math);font-size:16px;font-weight:700;
   color:var(--gold);white-space:nowrap;line-height:1;
+}
+/* la lettera dell'asse, in fondo a destra */
+#axis-strip::after{
+  content:'x';position:absolute;right:6px;top:3px;
+  font-family:var(--math);font-size:13px;font-style:italic;
+  color:rgba(255,255,255,.5);
 }
 
 /* pannello in basso */
 #panel{
-  flex:0 1 auto;min-height:0;
+  flex:0 0 clamp(172px,26vh,232px);min-height:0;overflow:hidden;
   background:var(--panel);
   border-top:1px solid var(--line);
   padding:9px 12px calc(9px + env(safe-area-inset-bottom));
-  display:flex;flex-direction:column;gap:8px;
+  display:flex;flex-direction:column;gap:8px;justify-content:center;
 }
 /* se i testi crescono scorre solo questa parte: i pulsanti restano sempre in vista */
 #panel-scroll{
@@ -172,11 +188,14 @@ button{
   line-height:1.5;
   animation:pop .35s ease-out;
 }
-#calc .row{display:flex;justify-content:space-between;gap:8px}
+#calc .row{display:flex;justify-content:space-between;gap:8px;opacity:.85;font-size:.92em}
 #calc .row span:last-child{color:var(--gold);white-space:nowrap}
 #calc .sol{
-  margin-top:6px;padding-top:6px;border-top:1px solid var(--line);
-  color:var(--good);font-size:clamp(14px,4vw,17px);text-align:center;
+  color:var(--good);font-size:clamp(15px,4.4vw,19px);text-align:center;font-weight:700;
+}
+#calc .iv{
+  color:var(--good);opacity:.75;text-align:center;
+  margin-bottom:5px;padding-bottom:5px;border-bottom:1px solid var(--line);
 }
 @keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
@@ -298,16 +317,18 @@ h1 .sub{
 @media (min-width:560px){
   #app{left:50%;right:auto;width:min(100vw,1180px);transform:translateX(-50%);
        border-left:1px solid var(--line);border-right:1px solid var(--line)}
-  #axis-strip{height:72px}
+  #axis-strip{flex:0 0 72px}
   .mark .lbl{font-size:17px}
   #actions button{max-width:280px}
 }
 
 /* schermi bassi: comprimo un po' */
 @media (max-height:640px){
-  #axis-strip{height:52px}
+  #axis-strip{flex:0 0 56px}
   #panel{padding-top:7px;gap:6px}
   #actions button{min-height:42px}
 }
+
+#axis-strip.on{visibility:visible}
 
 [hidden]{display:none!important}

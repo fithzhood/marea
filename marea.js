@@ -428,30 +428,11 @@
 
 
   /* rive, divisori e zone selezionabili */
+  /* nella scena restano solo i confini e le rive: la soluzione si legge sulla retta in basso */
   function drawZones() {
     if (!S.sea.revealed) return;
     var roots = S.nr === 2 ? [S.r1, S.r2] : S.nr === 1 ? [S.r1] : [];
     var i;
-    if (S.phase === 'pick' || S.phase === 'done') {
-      var yz = Y2P(0), band = Math.min(H * .16, 90);
-      for (i = 0; i < S.zones.length; i++) {
-        var z = S.zones[i];
-        var xa = isFinite(z.lo) ? X2P(z.lo) : -2, xb = isFinite(z.hi) ? X2P(z.hi) : W + 2;
-        var rgb = (S.phase === 'done' && S.okZones.indexOf(i) >= 0) ? '78,192,106' : null;
-        /* alone sfumato attorno all'asse: segnala la zona senza tingere il cielo */
-        if (rgb) {
-          var g2 = ctx.createLinearGradient(0, yz - band, 0, yz + band);
-          g2.addColorStop(0, 'rgba(' + rgb + ',0)');
-          g2.addColorStop(.5, 'rgba(' + rgb + ',.28)');
-          g2.addColorStop(1, 'rgba(' + rgb + ',0)');
-          ctx.fillStyle = g2;
-          ctx.fillRect(xa, yz - band, xb - xa, band * 2);
-          /* barra sottile e spostata sotto il pelo dell'acqua: le onde devono restare in vista */
-          ctx.fillStyle = 'rgb(' + rgb + ')';
-          ctx.fillRect(xa + 1.5, yz + 4, xb - xa - 3, 4);
-        }
-      }
-    }
     ctx.save();
     ctx.setLineDash([5, 5]); ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.4;
     for (i = 0; i < roots.length; i++) {
@@ -563,7 +544,10 @@
   /* ═══════════════ dimensioni ═══════════════ */
   function resize() {
     var r = stage.getBoundingClientRect();
-    W = Math.max(1, r.width); H = Math.max(1, r.height);
+    var nW = Math.max(1, r.width), nH = Math.max(1, r.height);
+    /* se la scena non è cambiata davvero non si ricalcola niente: la vista resta ferma */
+    if (Math.abs(nW - W) < .5 && Math.abs(nH - H) < .5) return;
+    W = nW; H = nH;
     var dpr = Math.min(window.devicePixelRatio || 1, 2.5);
     cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -679,12 +663,13 @@
     var sw = stripEl.getBoundingClientRect().width;
     for (var i = 0; i < S.zones.length; i++) {
       var z = S.zones[i];
-      var xa = isFinite(z.lo) ? X2P(z.lo) / W * sw : 0;
-      var xb = isFinite(z.hi) ? X2P(z.hi) / W * sw : sw;
+      /* i tratti infiniti si fermano prima delle punte della retta */
+      var xa = isFinite(z.lo) ? X2P(z.lo) / W * sw + 2 : 17;
+      var xb = isFinite(z.hi) ? X2P(z.hi) / W * sw - 2 : sw - 17;
       var d = document.createElement('div');
       d.className = 'zone' + (S.phase === 'done' && S.okZones.indexOf(i) >= 0 ? ' picked' : '');
-      d.style.left = (xa + 3) + 'px';
-      d.style.width = Math.max(10, xb - xa - 6) + 'px';
+      d.style.left = xa + 'px';
+      d.style.width = Math.max(8, xb - xa) + 'px';
       d.dataset.i = i;
       zonesEl.appendChild(d);
     }
@@ -730,8 +715,8 @@
     S.phase = p;
     setPips();
     calcEl.hidden = (p !== 'sea' && p !== 'pick' && p !== 'done') || !S.sea.revealed;
-    stripEl.hidden = (p !== 'pick' && p !== 'done');
-    if (!stripEl.hidden) layoutStrip();
+    stripEl.classList.toggle('on', p === 'pick' || p === 'done');
+    if (p === 'pick' || p === 'done') layoutStrip();
 
     if (p === 'bend') {
       say('Piega la barra: deve diventare il grafico di <b class="m">y = ' + polyString(S.a, S.b, S.c) + '</b>');
@@ -1148,14 +1133,15 @@
 
   function check() {
     var parts = buildSolution();
+    /* la soluzione per prima: e' quella che deve vedersi senza scorrere */
     calcEl.innerHTML =
-      '<div class="row"><span>Δ</span><span>' + fmtInt(S.D) + (S.nr === 2 ? ' > 0' : S.nr === 1 ? ' = 0' : ' < 0') + '</span></div>' +
-      '<div class="row"><span>concavità</span><span>' + (S.a > 0 ? 'verso l’alto (valle)' : 'verso il basso (collina)') + '</span></div>' +
+      '<div class="sol">' + solutionText(parts) + '</div>' +
+      '<div class="iv">' + intervalText(parts) + '</div>' +
+      '<div class="row"><span>Δ</span><span>' + fmtInt(S.D) + (S.nr === 2 ? ' > 0' : S.nr === 1 ? ' = 0' : ' < 0') +
+        ' · ' + (S.a > 0 ? 'valle' : 'collina') + '</span></div>' +
       (S.nr ? '<div class="row"><span>' + (S.nr === 2 ? 'x₁ , x₂' : 'x₀') + '</span><span>' +
         (S.nr === 2 ? rootLabel(S.r1) + ' , ' + rootLabel(S.r2) : rootLabel(S.r1)) + '</span></div>'
-              : '<div class="row"><span>rive</span><span>nessuna: il terreno non tocca il mare</span></div>') +
-      '<div class="sol">' + solutionText(parts) + '</div>' +
-      '<div class="row" style="justify-content:center;opacity:.8;margin-top:2px"><span>' + intervalText(parts) + '</span></div>';
+              : '<div class="row"><span>rive</span><span>nessuna</span></div>');
     calcEl.hidden = false;
     say('Soluzione trovata.');
     setActions([
@@ -1219,6 +1205,7 @@
     }
     $('#eq-display').innerHTML = eqString(S.a, S.b, S.c, S.op);
     calcEl.hidden = true;
+    stripEl.classList.remove('on');
     $('#setup').classList.add('hide');
     setTimeout(function () { $('#setup').hidden = true; resize(); }, 380);
     setPhase('bend');
@@ -1313,7 +1300,7 @@
     requestAnimationFrame(function () { $('#setup').classList.remove('hide'); });
     S.phase = 'setup';
     setPips();
-    stripEl.hidden = true;
+    stripEl.classList.remove('on');
   }
   $('#btn-restart').addEventListener('click', function () {
     if (S.phase === 'setup') return;
