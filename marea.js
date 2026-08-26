@@ -1060,35 +1060,35 @@
   function drawBalloon(x, y, text, alpha) {
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.font = '600 ' + (12.5 * UI).toFixed(1) + 'px ' + FONT;
+    var fs = 14.5 * UI;
+    ctx.font = '600 ' + fs.toFixed(1) + 'px ' + FONT;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    /* le frasi lunghe vanno su due righe, spezzate dove le due metà si pareggiano */
-    var righe = [text], k;
-    if (ctx.measureText(text).width + 20 > W - 26) {
-      var par = text.split(' '), tagl = -1, diff = 1e9;
-      for (k = 1; k < par.length; k++) {
-        var d = Math.abs(ctx.measureText(par.slice(0, k).join(' ')).width -
-                         ctx.measureText(par.slice(k).join(' ')).width);
-        if (d < diff) { diff = d; tagl = k; }
-      }
-      if (tagl > 0) righe = [par.slice(0, tagl).join(' '), par.slice(tagl).join(' ')];
+    /* si va a capo presto: un fumetto quasi quadrato sta meglio di una striscia lunga */
+    var maxW = Math.min(W * .5, 210 * UI), righe = [], cur = '', k;
+    var parole = text.split(' ');
+    for (k = 0; k < parole.length; k++) {
+      var prova = cur ? cur + ' ' + parole[k] : parole[k];
+      if (cur && ctx.measureText(prova).width > maxW) { righe.push(cur); cur = parole[k]; }
+      else cur = prova;
     }
+    if (cur) righe.push(cur);
+
     var wp = 0;
     for (k = 0; k < righe.length; k++) wp = Math.max(wp, ctx.measureText(righe[k]).width);
-    wp += 20;
-    var hp = righe.length > 1 ? 42 : 26;
-    var bx = clamp(x, wp / 2 + 5, W - wp / 2 - 5), by = y;
+    wp += 22 * UI;
+    var lh = fs * 1.28, hp = righe.length * lh + 14 * UI;
+    var bx = clamp(x, wp / 2 + 5, W - wp / 2 - 5), by = y - (hp - 26) / 2;
     ctx.fillStyle = 'rgba(255,255,255,.96)';
-    roundRect(bx - wp / 2, by - hp / 2, wp, hp, 9); ctx.fill();
+    roundRect(bx - wp / 2, by - hp / 2, wp, hp, 11 * UI); ctx.fill();
     ctx.beginPath();                                   /* codina verso il personaggio */
-    ctx.moveTo(clamp(x, bx - wp / 2 + 8, bx + wp / 2 - 8) - 5, by + hp / 2 - 1);
-    ctx.lineTo(clamp(x, bx - wp / 2 + 8, bx + wp / 2 - 8) + 5, by + hp / 2 - 1);
-    ctx.lineTo(x, by + hp / 2 + 9);
+    var cx = clamp(x, bx - wp / 2 + 10, bx + wp / 2 - 10);
+    ctx.moveTo(cx - 6 * UI, by + hp / 2 - 1);
+    ctx.lineTo(cx + 6 * UI, by + hp / 2 - 1);
+    ctx.lineTo(x, by + hp / 2 + 11 * UI);
     ctx.closePath(); ctx.fill();
     ctx.fillStyle = '#123049';
-    for (k = 0; k < righe.length; k++) {
-      ctx.fillText(righe[k], bx, by + 1 + (righe.length > 1 ? (k === 0 ? -9 : 9) : 0));
-    }
+    var y0 = by - (righe.length - 1) * lh / 2;
+    for (k = 0; k < righe.length; k++) ctx.fillText(righe[k], bx, y0 + k * lh + 1);
     ctx.restore();
   }
 
@@ -1265,16 +1265,11 @@
   function paintSetup() {
     document.querySelectorAll('.coef').forEach(function (el) {
       var k = el.dataset.k, v = draft[k], n = parseInt(v, 10), show;
+      /* il segno fa parte del coefficiente: fra un termine e l'altro c'è sempre + */
       if (isNaN(n)) show = (v === '-' ? MINUS : '') + '?';
-      else show = (k === 'a') ? fmtInt(n) : String(Math.abs(n));   /* per b e c il segno sta nel separatore */
+      else show = fmtInt(n);
       el.textContent = show;
       el.classList.toggle('active', editing === k);
-    });
-    /* segni fra i termini */
-    ['b', 'c'].forEach(function (k) {
-      var n = parseInt(draft[k], 10);
-      var el = document.querySelector('.sgn[data-for="' + k + '"]');
-      el.textContent = (isNaN(n) || n >= 0) ? '+' : MINUS;
     });
     $('#op-chip').textContent = opSym(draft.op);
     var a = parseInt(draft.a, 10);
@@ -1284,32 +1279,59 @@
     $('#btn-start').style.opacity = bad ? .45 : 1;
   }
 
+  var fresh = false;      /* true subito dopo aver scelto una casella: il primo tasto sostituisce */
+
+  function scegli(k) {
+    editing = k; fresh = true;
+    $('#pad').hidden = false;
+    paintSetup();
+  }
+  function premiTasto(k) {
+    if (!editing) scegli('a');
+    var v = draft[editing];
+    if (k === 'del') { v = v.length ? v.slice(0, -1) : ''; fresh = false; }
+    else if (k === 'neg') { v = v.charAt(0) === '-' ? v.slice(1) : '-' + v; fresh = false; }
+    else if (fresh) { v = k; fresh = false; }                     /* rimpiazza il valore che c'era */
+    else if (v.replace('-', '').length < 3) v = (v === '0' ? '' : v) + k;
+    draft[editing] = v;
+    paintSetup();
+  }
+
   document.querySelectorAll('.coef').forEach(function (el) {
-    el.addEventListener('click', function () {
-      editing = el.dataset.k;
-      $('#pad').hidden = false;
-      paintSetup();
-    });
+    el.addEventListener('click', function () { scegli(el.dataset.k); });
+  });
+
+  /* tastiera vera: cifre, meno, backspace, tab fra le caselle, invio per partire */
+  document.addEventListener('keydown', function (e) {
+    var setup = $('#setup');
+    if (setup.hidden || setup.classList.contains('hide')) return;
+    var k = e.key;
+    if (k >= '0' && k <= '9') { premiTasto(k); e.preventDefault(); }
+    else if (k === '-' || k === '+') { premiTasto('neg'); e.preventDefault(); }
+    else if (k === 'Backspace') { premiTasto('del'); e.preventDefault(); }
+    else if (k === 'Enter') { if (!$('#btn-start').disabled) $('#btn-start').click(); e.preventDefault(); }
+    else if (k === 'Tab' || k === 'ArrowRight' || k === 'ArrowLeft') {
+      var ordine = ['a', 'b', 'c'], i = ordine.indexOf(editing);
+      var avanti = (k !== 'ArrowLeft' && !e.shiftKey);
+      scegli(ordine[(i + (avanti ? 1 : ordine.length - 1) + ordine.length) % ordine.length]);
+      e.preventDefault();
+    }
+    else if (k === '>' || k === '<' || k === '=') {
+      draft.op = (k === '=') ? (draft.op === '>=' ? '<=' : '>=') : (k === '>' ? '>' : '<');
+      paintSetup(); e.preventDefault();
+    }
   });
   $('#op-chip').addEventListener('click', function () {
     draft.op = OPS[(OPS.indexOf(draft.op) + 1) % 4];
     paintSetup();
   });
   document.querySelectorAll('.key').forEach(function (el) {
-    el.addEventListener('click', function () {
-      if (!editing) return;
-      var k = el.dataset.key, v = draft[editing];
-      if (k === 'del') v = v.length ? v.slice(0, -1) : '';
-      else if (k === 'neg') v = v.charAt(0) === '-' ? v.slice(1) : '-' + v;
-      else if (v.replace('-', '').length < 3) v = (v === '0' ? '' : v) + k;
-      draft[editing] = v;
-      paintSetup();
-    });
+    el.addEventListener('click', function () { premiTasto(el.dataset.key); });
   });
   $('#btn-random').addEventListener('click', function () {
     randomProblem();
     draft = { a: String(S.a), b: String(S.b), c: String(S.c), op: S.op };
-    editing = null; $('#pad').hidden = true;
+    editing = 'a'; fresh = true;
     paintSetup();
   });
   $('#btn-start').addEventListener('click', function () {
@@ -1322,7 +1344,7 @@
   function openSetup() {
     tweens.length = 0;
     draft = { a: String(S.a), b: String(S.b), c: String(S.c), op: S.op };
-    editing = null; $('#pad').hidden = true;
+    editing = 'a'; fresh = true; $('#pad').hidden = false;
     paintSetup();
     $('#setup').hidden = false;
     requestAnimationFrame(function () { $('#setup').classList.remove('hide'); });
@@ -1359,6 +1381,7 @@
   /* ═══════════════ via ═══════════════ */
   randomProblem();
   draft = { a: String(S.a), b: String(S.b), c: String(S.c), op: S.op };
+  editing = 'a'; fresh = true; $('#pad').hidden = false;   /* si può digitare subito */
   paintSetup();
   solve();
   resize();
