@@ -424,28 +424,6 @@
     return p <= q ? [p, q] : [q, p];
   }
 
-  /* le rive con la loro ascissa: è l'unico riferimento per trovare il livello giusto */
-  function drawShores() {
-    if (S.phase !== 'sea' || S.sea.locked) return;
-    var xs = shoreX(), y = Y2P(S.sea.y), i, lab = [], pxs = [];
-    ctx.font = '700 13px ' + FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    for (i = 0; i < xs.length; i++) { lab.push('x = ' + fmtDec(xs[i])); pxs.push(X2P(xs[i])); }
-    for (i = 0; i < xs.length; i++) {
-      if (pxs[i] < -30 || pxs[i] > W + 30) continue;
-      var wp = ctx.measureText(lab[i]).width + 16;
-      var bx = pxs[i];
-      /* se le due rive sono vicine le etichette si scansano */
-      if (xs.length === 2 && Math.abs(pxs[0] - pxs[1]) < wp + 10) bx += (i === 0 ? -1 : 1) * (wp / 2 + 5);
-      bx = clamp(bx, wp / 2 + 4, W - wp / 2 - 4);
-      var by = y - 22;
-      ctx.fillStyle = 'rgba(9,32,50,.9)';
-      roundRect(bx - wp / 2, by - 12, wp, 24, 8); ctx.fill();
-      ctx.strokeStyle = 'rgba(255,202,71,.75)'; ctx.lineWidth = 1.2; ctx.stroke();
-      ctx.fillStyle = '#ffd97a'; ctx.fillText(lab[i], bx, by + 1);
-      ctx.beginPath(); ctx.arc(pxs[i], y, 4.5, 0, 6.2832);
-      ctx.fillStyle = '#ffca47'; ctx.fill();
-    }
-  }
 
 
   /* rive, divisori e zone selezionabili */
@@ -467,8 +445,9 @@
           g2.addColorStop(1, 'rgba(' + rgb + ',0)');
           ctx.fillStyle = g2;
           ctx.fillRect(xa, yz - band, xb - xa, band * 2);
+          /* barra sottile e spostata sotto il pelo dell'acqua: le onde devono restare in vista */
           ctx.fillStyle = 'rgb(' + rgb + ')';
-          ctx.fillRect(xa + 1.5, yz - 6, xb - xa - 3, 12);
+          ctx.fillRect(xa + 1.5, yz + 4, xb - xa - 3, 4);
         }
       }
     }
@@ -486,6 +465,52 @@
       ctx.beginPath(); ctx.arc(px, py, 6.5, 0, 6.2832);
       ctx.fillStyle = full ? '#ffca47' : '#0d2233';
       ctx.fill(); ctx.strokeStyle = '#ffca47'; ctx.lineWidth = 2.5; ctx.stroke();
+    }
+  }
+
+  /* cartelli piantati dove la parabola incontra l'asse: solo il numero */
+  /* Cartelli piantati dove il pelo dell'acqua tocca il terreno. Durante la marea si
+     spostano e il numero cambia: quando segnano le soluzioni, il livello e' quello giusto. */
+  function drawSigns() {
+    var xs, esatto;
+    if (S.phase === 'sea' && !S.sea.locked) { xs = shoreX(); esatto = false; }
+    else if (S.sea.revealed) {
+      xs = S.nr === 2 ? [S.r1, S.r2] : S.nr === 1 ? [S.r1] : [];
+      esatto = true;
+    } else return;
+    if (!xs.length) return;
+
+    var y0 = Y2P(S.sea.y), i, k;
+    ctx.font = '700 14.5px ' + FONT;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    var pxs = [], labs = [];
+    for (i = 0; i < xs.length; i++) {
+      pxs.push(X2P(xs[i]));
+      labs.push(esatto ? fmtNum(xs[i]) : fmtDec(xs[i]));
+    }
+    for (i = 0; i < xs.length; i++) {
+      var px = pxs[i];
+      if (px < -24 || px > W + 24) continue;
+      var alza = 0;
+      if (esatto) {                     /* se c'è un personaggio lì sotto, il palo si allunga */
+        for (k = 0; k < S.heroes.length; k++) {
+          if (Math.abs(S.heroes[k].x - px) < 34) alza = 52;   /* passa sopra la sua testa */
+        }
+      }
+      var wp = Math.max(30, ctx.measureText(labs[i]).width + 18);
+      var plateH = 22, top = y0 - 26 - plateH - alza;
+      /* due cartelli vicini: il secondo sale di un piano */
+      if (xs.length === 2 && Math.abs(pxs[0] - pxs[1]) < wp + 10 && i === 1) top -= plateH + 7;
+      var bx = clamp(px, wp / 2 + 3, W - wp / 2 - 3);
+      ctx.strokeStyle = '#6b4f33'; ctx.lineWidth = 3.5; ctx.lineCap = 'butt';
+      ctx.beginPath(); ctx.moveTo(px, y0); ctx.lineTo(px, top + plateH - 1); ctx.stroke();
+      ctx.fillStyle = '#f7f1e0';
+      roundRect(bx - wp / 2, top, wp, plateH, 4); ctx.fill();
+      ctx.strokeStyle = '#6b4f33'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = '#3a2b1c';
+      ctx.fillText(labs[i], bx, top + plateH / 2 + 1);
+      ctx.beginPath(); ctx.arc(px, y0, 4.5, 0, 6.2832);
+      ctx.fillStyle = '#ffca47'; ctx.fill();
     }
   }
 
@@ -524,9 +549,9 @@
     drawTrees();
     drawSea();
     drawZones();
+    drawSigns();
     drawHeroes();
     drawLevel();
-    drawShores();
     drawHandle();
   }
 
@@ -672,7 +697,7 @@
       m.className = 'mark';
       m.style.left = (X2P(roots[k]) / W * sw) + 'px';
       m.innerHTML = '<div class="dot' + (full ? ' full' : '') + '"></div>' +
-        '<div class="lbl">x' + (roots.length === 1 ? '₀' : k === 0 ? '₁' : '₂') + ' = ' + fmtNum(roots[k]) + '</div>';
+        '<div class="lbl">' + fmtNum(roots[k]) + '</div>';
       marksEl.appendChild(m);
     }
   }
@@ -842,6 +867,28 @@
     return best;
   }
 
+  /* cerca nella zona il punto migliore: pianeggiante per l'alpinista, fondo per il sub */
+  function spotInZone(xa, xb, z, isAlp, margine, lasco) {
+    var lo = isFinite(z.lo) ? xa + margine : xa + 6;
+    var hi = isFinite(z.hi) ? xb - margine : xb - 6;
+    lo = Math.max(lo, 26); hi = Math.min(hi, W - 26);
+    if (hi < lo) { var c = clamp((xa + xb) / 2, 26, W - 26); lo = c; hi = c; }
+    var ySea = Y2P(0), best = null, bestScore = -1e9, n = (hi > lo) ? 20 : 0;
+    for (var k = 0; k <= n; k++) {
+      var px = n ? lo + (hi - lo) * k / n : lo, gy = ground(px), score;
+      if (isAlp) {
+        if (!lasco && (gy < 52 || gy > H - 26)) continue;
+        score = -Math.abs(ground(px + 5) - ground(px - 5));
+      } else {
+        var d = Math.min(gy, H) - ySea;
+        if (!lasco && d < 26) continue;
+        score = d;
+      }
+      if (score > bestScore) { bestScore = score; best = px; }
+    }
+    return best;
+  }
+
   function placeHeroes() {
     S.heroes = [];
     if (!S.hero) return;
@@ -866,22 +913,12 @@
       var z = S.zones[i];
       var xa = clamp(isFinite(z.lo) ? X2P(z.lo) : 0, 4, W - 4);
       var xb = clamp(isFinite(z.hi) ? X2P(z.hi) : W, 4, W - 4);
-      var m = Math.min((xb - xa) * .2, W * .1);
-      /* margine anche dai bordi dello schermo, o il personaggio esce dall'inquadratura */
-      var lo = Math.max(xa + m, 30), hi = Math.min(xb - m, W - 30);
-      if (hi - lo < 8) { lo = clamp((xa + xb) / 2 - 4, 30, W - 38); hi = lo + 8; }
-      var best = null, bestScore = -1e9;
-      for (k = 0; k <= 20; k++) {
-        var px = lo + (hi - lo) * k / 20, gy = ground(px), score;
-        if (isAlp) {
-          if (gy < 52 || gy > H - 26) continue;                 /* terreno fuori vista */
-          score = -Math.abs(ground(px + 5) - ground(px - 5));    /* cerca il piano */
-        } else {
-          if (Math.min(gy, H) - ySea < 26) continue;             /* acqua troppo bassa */
-          score = Math.min(gy, H) - ySea;                        /* cerca il fondo */
-        }
-        if (score > bestScore) { bestScore = score; best = px; }
-      }
+      /* si prova a stare larghi dalle rive, dove vanno i cartelli; se in quella fascia
+         il terreno esce dall'inquadratura si stringe, e in ultima istanza si accetta
+         qualunque punto: una zona della soluzione deve SEMPRE avere il suo personaggio */
+      var best = spotInZone(xa, xb, z, isAlp, 26, false);
+      if (best == null) best = spotInZone(xa, xb, z, isAlp, 10, false);
+      if (best == null) best = spotInZone(xa, xb, z, isAlp, 4, true);
       if (best == null) continue;
       var g2 = ground(best), deep = Math.min(g2, H) - ySea;
       S.heroes.push({
@@ -891,13 +928,15 @@
         text: zoneText(i)
       });
     }
-    if (S.heroes.length) return;
+    if (S.heroes.length || S.okZones.length) return;
     /* nessuna zona: il personaggio compare lo stesso e dice come stanno le cose */
     var roots = S.nr === 2 ? [S.r1, S.r2] : S.nr === 1 ? [S.r1] : [];
     var inc = (S.op === '>=' || S.op === '<=');
     if (inc && roots.length === 1) {
-      S.heroes.push({ x: X2P(roots[0]), y: isAlp ? ground(X2P(roots[0])) : Y2P(0) + 14, s: .9,
-        text: 'Ci sto solo in ' + fmtNum(roots[0]) });
+      /* il punto è il fondo della conca: sotto c'è terra piena, quindi ci galleggia sopra */
+      S.heroes.push({ x: X2P(roots[0]), y: isAlp ? ground(X2P(roots[0])) : Y2P(0) - 13, s: .9,
+        text: isAlp ? 'È rimasta solo la punta sul ' + fmtNum(roots[0])
+                    : 'C’è soltanto una goccia sul ' + fmtNum(roots[0]) });
     } else {
       /* nessun posto dove stare: resta in piedi sul terreno, scontento */
       var spot = flatSpot(), gy = ground(spot);
@@ -907,9 +946,9 @@
       S.heroes.push({
         x: spot, y: y, s: 1, standing: true, sad: true,
         underwater: isAlp && y > Y2P(0),        /* l'alpinista senza montagne è sott'acqua */
-        text: isAlp ? (sfiora ? 'Emerge solo la punta: niente da scalare!'
+        text: isAlp ? (sfiora ? 'Non c’è più spazio'
                               : 'Qui non c’è nessuna montagna… blub blub!')
-                    : (sfiora ? 'L’acqua qui è profonda zero!'
+                    : (sfiora ? 'Non c’è acqua'
                               : 'Qui non c’è acqua da nessuna parte')
       });
     }

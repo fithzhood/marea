@@ -99,27 +99,26 @@ button{
 
 /* striscia asse x */
 #axis-strip{
-  position:relative;flex:0 0 auto;height:58px;
+  position:relative;flex:0 0 auto;height:64px;
   background:var(--panel-2);
   border-top:1px solid var(--line);
   overflow:hidden;
 }
 #axis-line{
-  position:absolute;left:0;right:0;top:26px;height:2px;
-  background:rgba(255,255,255,.45);
+  position:absolute;left:0;right:0;top:20px;height:2px;
+  background:rgba(255,255,255,.28);
 }
 #axis-zones{position:absolute;inset:0}
 .zone{
-  position:absolute;top:12px;height:30px;
-  border-radius:7px;
-  background:rgba(255,255,255,.07);
-  border:1.5px dashed rgba(255,255,255,.5);
+  position:absolute;top:10px;height:22px;
+  border-radius:6px;
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.22);
   transition:background .18s,border-color .18s;
 }
 .zone.picked{
-  background:rgba(78,192,106,.34);
-  border:1px solid var(--good);
-  box-shadow:0 0 0 1px rgba(78,192,106,.35) inset;
+  background:rgba(78,192,106,.42);
+  border:1.5px solid var(--good);
 }
 .zone.wrong{animation:shake .4s}
 @keyframes shake{
@@ -129,17 +128,17 @@ button{
 }
 #axis-marks{position:absolute;inset:0;pointer-events:none}
 .mark{
-  position:absolute;top:19px;transform:translateX(-50%);
+  position:absolute;top:14px;transform:translateX(-50%);
   display:flex;flex-direction:column;align-items:center;
 }
 .mark .dot{
-  width:13px;height:13px;border-radius:50%;
+  width:14px;height:14px;border-radius:50%;
   border:2.5px solid var(--gold);background:var(--panel-2);
 }
 .mark .dot.full{background:var(--gold)}
 .mark .lbl{
-  margin-top:2px;font-family:var(--math);font-size:12.5px;
-  color:var(--gold);white-space:nowrap;
+  margin-top:6px;font-family:var(--math);font-size:15px;font-weight:700;
+  color:var(--gold);white-space:nowrap;line-height:1;
 }
 
 /* pannello in basso */
