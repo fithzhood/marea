@@ -166,6 +166,8 @@
   function runTweens() {
     for (var i = tweens.length - 1; i >= 0; i--) if (tweens[i].step()) tweens.splice(i, 1);
   }
+  function after(ms, fn) { tween(function () { return 0; }, function () {}, 1, ms, fn); }
+
   function advance(ms) { CLOCK += ms; S.t = CLOCK / 1000; runTweens(); updateFish(ms / 1000); draw(); }
 
   /* ═══════════════ disegno ═══════════════ */
@@ -808,7 +810,9 @@
     }
     calcEl.innerHTML = html; calcEl.hidden = false;
     say('L’acqua è a <b>quota 0</b>: sopra il pelo dell’acqua ' + polyString(S.a, S.b, S.c) + ' è positivo, sotto è negativo.');
-    setActions([{ label: 'Avanti', cls: 'primary', fn: function () { setPhase('pick'); } }]);
+    setActions([]);
+    /* niente pulsante: dopo un attimo per guardare le rive si passa da soli */
+    after(1600, function () { if (S.phase === 'sea') setPhase('pick'); });
   }
   function rootLabel(r) {
     return isExact(r) ? fmtNum(r) : '≈ ' + r.toFixed(2).replace('-', MINUS).replace('.', ',');
