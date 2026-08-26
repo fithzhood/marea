@@ -75,7 +75,7 @@
     phase: 'setup',           // setup | bend | sea | pick | done
     a: 1, b: -2, c: -3, op: '>',
     D: 0, r1: null, r2: null, nr: 0, xv: 0, yv: 0,
-    zones: [], okZones: [], picks: {}, attempts: 0,
+    zones: [], okZones: [], picks: {}, attempts: 0, fish: [],
     bend: { d: 0, target: 0, morph: 0, dragging: false, touched: false, busy: false },
     sea: { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 },
     trees: [],
@@ -160,7 +160,7 @@
   function runTweens() {
     for (var i = tweens.length - 1; i >= 0; i--) if (tweens[i].step()) tweens.splice(i, 1);
   }
-  function advance(ms) { CLOCK += ms; S.t = CLOCK / 1000; runTweens(); draw(); }
+  function advance(ms) { CLOCK += ms; S.t = CLOCK / 1000; runTweens(); updateFish(ms / 1000); draw(); }
 
   /* ═══════════════ disegno ═══════════════ */
   var clouds = [
@@ -171,8 +171,8 @@
 
   function drawSky() {
     var g = ctx.createLinearGradient(0, 0, 0, H);
-    /* il fondo del cielo resta pallido ma non bianco, o l'acqua non stacca più */
-    g.addColorStop(0, '#1f6fb5'); g.addColorStop(.55, '#63b2dd'); g.addColorStop(1, '#a6d8ea');
+    /* cielo chiaro e luminoso: il mare è verde scuro, così le due masse non si confondono */
+    g.addColorStop(0, '#3f9ad6'); g.addColorStop(.5, '#8fcdea'); g.addColorStop(1, '#dcf0f7');
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 
     var sx = W * .84, sy = H * .15, r = Math.min(W, H) * .062;
@@ -261,34 +261,124 @@
     return Math.sin(px * .042 + S.t * 2.1) * 2.1 + Math.sin(px * .019 - S.t * 1.35) * 1.5;
   }
 
-  function drawSea() {
-    if (S.phase === 'bend' || S.phase === 'setup') return;
-    var base = Y2P(S.sea.y);
-    var top = [], bot = [], px;
+  /* profilo dell'acqua: superficie ondulata sopra, terreno (o fondo schermo) sotto */
+  var seaTop = [], seaBot = [];
+  function seaProfile() {
+    seaTop.length = 0; seaBot.length = 0;
+    var base = Y2P(S.sea.y), px;
     for (px = -4; px <= W + 4; px += 4) {
       var ty = base + waveAt(px);
-      top.push(ty);
-      bot.push(Math.max(ty, Math.min(ground(px), H + 60)));
+      seaTop.push(ty);
+      seaBot.push(Math.max(ty, Math.min(ground(px), H + 60)));
     }
+  }
+  function waterPath() {
+    var px, i = 0;
     ctx.beginPath();
-    var i = 0;
-    for (px = -4; px <= W + 4; px += 4, i++) { if (i === 0) ctx.moveTo(px, top[i]); else ctx.lineTo(px, top[i]); }
+    for (px = -4; px <= W + 4; px += 4, i++) { if (i === 0) ctx.moveTo(px, seaTop[i]); else ctx.lineTo(px, seaTop[i]); }
     i--;
-    for (px = px - 4; px >= -4; px -= 4, i--) ctx.lineTo(px, bot[i]);
+    for (px = px - 4; px >= -4; px -= 4, i--) ctx.lineTo(px, seaBot[i]);
     ctx.closePath();
+  }
+
+  function drawSea() {
+    if (S.phase === 'bend' || S.phase === 'setup') return;
+    seaProfile();
+    var base = Y2P(S.sea.y);
+    waterPath();
     var g = ctx.createLinearGradient(0, base, 0, H);
-    g.addColorStop(0, 'rgba(64,178,232,.82)'); g.addColorStop(.45, 'rgba(20,112,182,.90)'); g.addColorStop(1, 'rgba(7,45,84,.96)');
+    g.addColorStop(0, 'rgba(23,150,150,.93)');
+    g.addColorStop(.45, 'rgba(11,97,120,.95)');
+    g.addColorStop(1, 'rgba(4,38,58,.98)');
     ctx.fillStyle = g; ctx.fill();
 
+    /* i pesci nuotano ritagliati dentro l'acqua: non possono uscirne mai */
+    ctx.save(); waterPath(); ctx.clip(); drawFish(); ctx.restore();
+
     /* superficie: solo nei tratti dove l'acqua esiste davvero, non sopra la terraferma */
-    ctx.beginPath(); i = 0;
-    var open = false;
+    ctx.beginPath();
+    var open = false, px, i = 0;
     for (px = -4; px <= W + 4; px += 4, i++) {
-      if (bot[i] - top[i] > 1.5) {
-        if (!open) { ctx.moveTo(px, top[i]); open = true; } else ctx.lineTo(px, top[i]);
+      if (seaBot[i] - seaTop[i] > 1.5) {
+        if (!open) { ctx.moveTo(px, seaTop[i]); open = true; } else ctx.lineTo(px, seaTop[i]);
       } else open = false;
     }
-    ctx.strokeStyle = 'rgba(207,240,255,.9)'; ctx.lineWidth = 2.2; ctx.stroke();
+    ctx.strokeStyle = 'rgba(222,248,255,.95)'; ctx.lineWidth = 2.4; ctx.stroke();
+  }
+
+  /* ═══════════════ pesci ═══════════════ */
+  var FISH_COLORS = ['#ff9f43', '#ffd166', '#ff7f9c', '#7fe3ff', '#ffbe6b', '#a8f0b6'];
+  function spawnFish() {
+    S.fish = [];
+    for (var i = 0; i < 9; i++) {
+      S.fish.push({
+        x: 20 + Math.random() * Math.max(60, W - 40),
+        depth: .16 + Math.random() * .68,
+        v: (Math.random() < .5 ? -1 : 1) * (11 + Math.random() * 17),
+        s: 5.5 + Math.random() * 4,
+        ph: Math.random() * 6.283,
+        c: FISH_COLORS[i % FISH_COLORS.length],
+        y: null, dry: 0
+      });
+    }
+  }
+  /* porta il pesce nel tratto d'acqua più profondo, se ce n'è uno che lo contiene */
+  function moveToWater(f, ySurf, pad) {
+    var best = -1, bestX = null, x, i;
+    for (i = 0; i <= 24; i++) {
+      x = 6 + (W - 12) * i / 24;
+      var sp = Math.min(ground(x), H + 40) - ySurf;
+      if (sp > best) { best = sp; bestX = x; }
+    }
+    if (bestX != null && best > pad * 2 + 8) {
+      f.x = clamp(bestX + (Math.random() - .5) * W * .3, 8, W - 8);
+      f.depth = .16 + Math.random() * .68;      /* sparpaglia anche in profondità */
+    }
+  }
+
+  function updateFish(dt) {
+    if (S.phase === 'setup' || S.phase === 'bend') return;
+    var ySurf = Y2P(S.sea.y);
+    for (var i = 0; i < S.fish.length; i++) {
+      var f = S.fish[i];
+      f.x += f.v * dt;
+      if (f.x < 10 && f.v < 0) f.v = -f.v;
+      if (f.x > W - 10 && f.v > 0) f.v = -f.v;
+      var pad = f.s * 1.4;
+      var space = Math.min(ground(f.x), H + 40) - ySurf;
+      if (space < pad * 2 + 4) {        /* qui l'acqua è troppo bassa: fa dietrofront */
+        f.v = -f.v; f.x += f.v * dt * 1.5; f.y = null;
+        f.dry += dt;
+        /* se resta all'asciutto torna dove l'acqua è fonda: succede mentre è invisibile */
+        if (f.dry > 1.1) { f.dry = 0; moveToWater(f, ySurf, pad); }
+      } else {
+        f.y = ySurf + pad + (space - pad * 2) * f.depth;
+        f.dry = 0;
+      }
+    }
+  }
+  function drawFish() {
+    for (var i = 0; i < S.fish.length; i++) {
+      var f = S.fish[i];
+      if (f.y == null) continue;
+      var s = f.s, wag = Math.sin(S.t * 7 + f.ph) * s * .32;
+      ctx.save();
+      ctx.globalAlpha = .96 - f.depth * .28;
+      ctx.translate(f.x, f.y + Math.sin(S.t * 2.2 + f.ph) * 2);
+      ctx.scale(f.v < 0 ? -1 : 1, 1);
+      ctx.fillStyle = f.c;
+      ctx.beginPath(); ctx.ellipse(0, 0, s, s * .55, 0, 0, 6.2832); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-s * .78, 0);
+      ctx.lineTo(-s * 1.5, -s * .5 + wag);
+      ctx.lineTo(-s * 1.5, s * .5 + wag);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.5)';
+      ctx.beginPath(); ctx.ellipse(-s * .05, s * .2, s * .48, s * .16, 0, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#0b2030';
+      ctx.beginPath(); ctx.arc(s * .46, -s * .14, s * .13, 0, 6.2832); ctx.fill();
+      ctx.restore();
+    }
   }
 
   /* linea della quota corrente + righello */
@@ -799,6 +889,7 @@
     S.picks = {}; S.attempts = 0;
     computeView();
     S.sea.y = S.sea.start;
+    spawnFish();
     S.trees = [];
     for (var i = 0; i < 11; i++) {
       S.trees.push({ x: V.x0 + (i + .5 + (i % 3) * .18) / 11 * (V.x1 - V.x0), s: .8 + (i % 4) * .12 });
