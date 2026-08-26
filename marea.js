@@ -75,7 +75,7 @@
     phase: 'setup',           // setup | bend | sea | pick | done
     a: 1, b: -2, c: -3, op: '>',
     D: 0, r1: null, r2: null, nr: 0, xv: 0, yv: 0,
-    zones: [], okZones: [], picks: {}, attempts: 0, fish: [],
+    zones: [], okZones: [], picks: {}, attempts: 0, fish: [], fishMax: 0,
     bend: { d: 0, target: 0, morph: 0, dragging: false, touched: false, busy: false },
     sea: { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 },
     trees: [],
@@ -340,11 +340,20 @@
     }
   }
 
+  /* quanta acqua c'è, in pixel quadri: una pozza piccola ospita pochi pesci */
+  function waterArea() {
+    var n = 0;
+    for (var i = 0; i < seaBot.length; i++) n += Math.max(0, seaBot[i] - seaTop[i]);
+    return n * 4;
+  }
+
   function updateFish(dt) {
     if (S.phase === 'setup' || S.phase === 'bend') return;
     var ySurf = Y2P(S.sea.y);
+    S.fishMax = clamp(Math.round(waterArea() / 4500), 0, S.fish.length);
     for (var i = 0; i < S.fish.length; i++) {
       var f = S.fish[i];
+      if (i >= S.fishMax) { f.y = null; continue; }
       f.x += f.v * dt;
       if (f.x < 10 && f.v < 0) f.v = -f.v;
       if (f.x > W - 10 && f.v > 0) f.v = -f.v;
@@ -387,54 +396,54 @@
 
   /* linea della quota corrente + righello */
   function drawLevel() {
-    if (S.phase === 'bend' || S.phase === 'setup') return;
+    if (S.phase === 'bend' || S.phase === 'setup' || S.sea.locked) return;
     var y = Y2P(S.sea.y);
-    if (!S.sea.locked) {           /* agganciato allo zero coincide con l'asse: una riga basta */
-      ctx.save();
-      ctx.setLineDash([7, 6]);
-      ctx.strokeStyle = 'rgba(255,255,255,.6)';
-      ctx.lineWidth = 1.6;
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-      ctx.restore();
-    }
-
-    if (!S.sea.locked) {
-      /* quota corrente + invito a trascinare, tutto a sinistra per non coprire il righello */
-      var lab = '⇕   y = ' + fmtDec(S.sea.y);
-      ctx.font = '700 13.5px ' + FONT; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      var wpx = ctx.measureText(lab).width + 20;
-      ctx.fillStyle = 'rgba(9,32,50,.88)';
-      roundRect(9, y - 14, wpx, 28, 9); ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 1; ctx.stroke();
-      ctx.fillStyle = '#cfeaff'; ctx.fillText(lab, 19, y + 1);
-    }
-  }
-
-  function drawRuler() {
-    if (S.phase === 'setup' || S.phase === 'bend') return;
-    var span = V.y1 - V.y0;
-    var raw = span / 6, mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10));
-    var n = raw / mag, step = (n >= 5 ? 5 : n >= 2 ? 2 : 1) * mag;
     ctx.save();
-    ctx.font = '600 11px ' + FONT; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    var start = Math.ceil(V.y0 / step) * step;
-    for (var v = start; v <= V.y1; v += step) {
-      var y = Y2P(v), zero = Math.abs(v) < 1e-9;
-      if (zero) continue;
-      ctx.strokeStyle = 'rgba(255,255,255,.3)'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(W - 8, y); ctx.lineTo(W - 2, y); ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,.62)';
-      ctx.fillText(fmtDec(v), W - 11, y);
-    }
-    /* asse x: la quota zero */
-    var y0 = Y2P(0);
-    ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.4;
-    ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(W, y0); ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,.95)';
-    ctx.font = '700 12px ' + FONT;
-    ctx.fillText('0', W - 11, y0 - 9);
+    ctx.setLineDash([7, 6]);
+    ctx.strokeStyle = 'rgba(255,255,255,.6)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     ctx.restore();
+    /* maniglia senza numeri: la quota non si legge, si legge dove finiscono le rive */
+    ctx.fillStyle = 'rgba(9,32,50,.88)';
+    roundRect(9, y - 14, 30, 28, 9); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#cfeaff'; ctx.font = '700 15px ' + FONT;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('⇕', 24, y + 1);
   }
+
+  /* ascisse dei punti in cui il livello del mare incontra il profilo del terreno */
+  function shoreX() {
+    var disc = S.b * S.b - 4 * S.a * (S.c - S.sea.y);
+    if (disc < 0) return [];
+    var s = Math.sqrt(disc), p = (-S.b - s) / (2 * S.a), q = (-S.b + s) / (2 * S.a);
+    return p <= q ? [p, q] : [q, p];
+  }
+
+  /* le rive con la loro ascissa: è l'unico riferimento per trovare il livello giusto */
+  function drawShores() {
+    if (S.phase !== 'sea' || S.sea.locked) return;
+    var xs = shoreX(), y = Y2P(S.sea.y), i, lab = [], pxs = [];
+    ctx.font = '700 13px ' + FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (i = 0; i < xs.length; i++) { lab.push('x = ' + fmtDec(xs[i])); pxs.push(X2P(xs[i])); }
+    for (i = 0; i < xs.length; i++) {
+      if (pxs[i] < -30 || pxs[i] > W + 30) continue;
+      var wp = ctx.measureText(lab[i]).width + 16;
+      var bx = pxs[i];
+      /* se le due rive sono vicine le etichette si scansano */
+      if (xs.length === 2 && Math.abs(pxs[0] - pxs[1]) < wp + 10) bx += (i === 0 ? -1 : 1) * (wp / 2 + 5);
+      bx = clamp(bx, wp / 2 + 4, W - wp / 2 - 4);
+      var by = y - 22;
+      ctx.fillStyle = 'rgba(9,32,50,.9)';
+      roundRect(bx - wp / 2, by - 12, wp, 24, 8); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,202,71,.75)'; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.fillStyle = '#ffd97a'; ctx.fillText(lab[i], bx, by + 1);
+      ctx.beginPath(); ctx.arc(pxs[i], y, 4.5, 0, 6.2832);
+      ctx.fillStyle = '#ffca47'; ctx.fill();
+    }
+  }
+
 
   /* rive, divisori e zone selezionabili */
   function drawZones() {
@@ -463,8 +472,8 @@
           ctx.fillRect(xa, yz - band, xb - xa, band * 2);
           ctx.fillStyle = 'rgb(' + rgb + ')';
           ctx.fillRect(xa + 1.5, yz - 6, xb - xa - 3, 12);
-        } else if (S.phase === 'pick') {
-          /* zona ancora da decidere: uno slot vuoto da riempire */
+        } else {
+          /* zona ancora da decidere (o scartata): uno slot vuoto sull'asse */
           ctx.save();
           ctx.setLineDash([6, 5]);
           ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.6;
@@ -525,8 +534,8 @@
     drawTrees();
     drawSea();
     drawZones();
-    drawRuler();
     drawLevel();
+    drawShores();
     drawHandle();
   }
 
@@ -717,11 +726,19 @@
       say('Piega la barra: deve diventare il grafico di <b class="m">y = ' + polyString(S.a, S.b, S.c) + '</b>');
       setActions([{ label: 'Cambia disequazione', cls: 'ghost', fn: openSetup }]);
     } else if (p === 'sea') {
-      say('Il mare parte dal fondo. Alzalo fino alla quota che serve alla disequazione.');
-      setActions([
-        { label: '▼', fn: function () { nudge(-1); } },
-        { label: '▲', fn: function () { nudge(1); } }
-      ]);
+      if (S.nr === 0) {
+        /* niente radici, quindi niente rive su cui puntare: il mare va da sé */
+        say('<b class="m">' + polyString(S.a, S.b, S.c) + ' = 0</b> non ha soluzioni: non c’è nessuna riva da cercare. Il mare sale da solo.');
+        setActions([]);
+        S.sea.locked = true;
+        tween(function () { return S.sea.y; }, function (v) { S.sea.y = v; }, 0, 1500, revealRoots);
+      } else {
+        say('Alza il mare finché le rive arrivano sulle soluzioni di <b class="m">' + polyString(S.a, S.b, S.c) + ' = 0</b>');
+        setActions([
+          { label: '▼', fn: function () { nudge(-1); } },
+          { label: '▲', fn: function () { nudge(1); } }
+        ]);
+      }
     } else if (p === 'pick') {
       say('Tocca le zone che risolvono <b class="m">' + polyString(S.a, S.b, S.c) + ' ' + opSym(S.op) + ' 0</b>, poi conferma.');
       setActions([{ label: 'Conferma', cls: 'primary', fn: check }]);
@@ -1005,14 +1022,19 @@
   var HELP = {
     setup: ['Come funziona', '<p>Scegli i tre coefficienti e il verso. Poi pieghi una barra fino a farne una parabola, alzi il mare e decidi quali zone tenere.</p>'],
     bend: ['La concavità', '<p>Il coefficiente <span class="m">a</span> decide come si piega la parabola: se <span class="m">a &gt; 0</span> la concavità è verso l’alto (una valle), se <span class="m">a &lt; 0</span> è verso il basso (una collina).</p><p>Qui <span class="m">a = {A}</span>.</p>'],
-    sea: ['La quota giusta', '<p>La disequazione confronta il polinomio con <span class="m">0</span>. Quindi il pelo dell’acqua va portato a <span class="m">quota 0</span>: da lì in su il terreno è emerso e <span class="m">y &gt; 0</span>, da lì in giù è sommerso e <span class="m">y &lt; 0</span>.</p><p>Dove il profilo taglia il mare stanno le due soluzioni dell’equazione associata.</p>'],
+    sea: ['Dove fermare il mare', '<p>Le <b>rive</b> sono i punti in cui il pelo dell’acqua incontra il terreno, e sotto ognuna trovi la sua <span class="m">x</span>. Il mare è al posto giusto quando quelle due <span class="m">x</span> sono le soluzioni di <span class="m">{EQ} = 0</span>: lì l’acqua è a quota zero, e la disequazione con zero si confronta.</p><p>Se non le hai ancora calcolate: <span class="m">Δ = b² − 4ac = {DELTA}</span>, e <span class="m">x = (−b ± √Δ) / 2a = {ROOTS}</span>.</p>'],
     pick: ['Quali zone', '<p>Il verso dice cosa cercare: <span class="m">&gt; 0</span> vuol dire terreno <b>sopra</b> il pelo dell’acqua, <span class="m">&lt; 0</span> terreno <b>sotto</b>.</p><p>Con <span class="m">≥</span> e <span class="m">≤</span> anche le rive fanno parte della soluzione: i pallini sono pieni.</p>'],
     done: ['Il risultato', '<p>Le zone verdi sono quelle che risolvono la disequazione. Sotto trovi la soluzione scritta come disuguaglianza e come intervalli.</p>']
   };
   $('#btn-help').addEventListener('click', function () {
     var h = HELP[S.phase] || HELP.setup;
     $('#help-title').textContent = h[0];
-    $('#help-body').innerHTML = h[1].replace('{A}', fmtInt(S.a));
+    $('#help-body').innerHTML = h[1]
+      .replace('{A}', fmtInt(S.a))
+      .replace('{EQ}', polyString(S.a, S.b, S.c))
+      .replace('{DELTA}', fmtInt(S.D))
+      .replace('{ROOTS}', S.nr === 2 ? rootLabel(S.r1) + ' e ' + rootLabel(S.r2)
+                        : S.nr === 1 ? rootLabel(S.r1) + ' (una sola)' : 'nessuna soluzione');
     $('#helpbox').hidden = false;
   });
   $('#help-close').addEventListener('click', function () { $('#helpbox').hidden = true; });
