@@ -1057,7 +1057,7 @@
     ctx.beginPath(); ctx.arc(-s * .065, -s * .945, s * .023, 0, 6.2832);
     ctx.arc(s * .065, -s * .945, s * .023, 0, 6.2832); ctx.fill();
     ctx.strokeStyle = '#9c6552'; ctx.lineWidth = s * .028;      /* broncio */
-    ctx.beginPath(); ctx.arc(0, -s * .84, s * .075, Math.PI * 1.22, Math.PI * 1.78); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, -s * .805, s * .07, Math.PI * 1.22, Math.PI * 1.78); ctx.stroke();
   }
 
   function drawDiver(s) {
