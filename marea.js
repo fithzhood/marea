@@ -46,7 +46,7 @@
   /* per righello e quota: sempre decimale, mai frazione */
   function fmtDec(v) {
     var a = Math.abs(v);
-    var s = v.toFixed(a >= 10 ? 0 : a >= 1 ? 1 : 2);
+    var s = v.toFixed(a >= 10 ? 0 : a >= 1 ? 1 : a >= .1 ? 2 : a >= .01 ? 3 : 4);
     if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\.$/, '');
     if (s === '-0') s = '0';
     return s.replace('-', MINUS).replace('.', ',');
@@ -92,40 +92,44 @@
   function f(x) { return (S.a * x + S.b) * x + S.c; }
 
   /* ═══════════════ vista ═══════════════ */
+  /* La parabola sullo schermo ha SEMPRE la stessa curvatura, qualunque sia a: cambia
+     solo il verso e dove cade la quota zero. Non è un grafico in scala fissa, è un
+     disegno leggibile — la mappatura resta lineare, quindi radici, segni e righello
+     restano veri; a decide solo quanto vale un'unità sull'asse y. */
   function computeView() {
-    var a = S.a;
+    var a = S.a, absA = Math.abs(a);
     S.xv = -S.b / (2 * a);
     S.yv = f(S.xv);
-    /* mezza larghezza: le radici devono stare comode dentro il quadro */
-    var hx = S.nr === 2 ? (S.r2 - S.r1) * 1.15
-                        : 2.2 * Math.sqrt(Math.max(Math.abs(S.yv), .5) / Math.abs(a));
-    hx = Math.max(hx, 1.2);
-    /* fascia verticale: contiene il vertice e la quota zero, con cielo sopra e terra sotto */
-    var top = Math.max(S.yv, 0), bot = Math.min(S.yv, 0);
-    var d = Math.max(top - bot, 1);
-    /* il margine largo va dove la parabola apre: cielo sopra la valle, mare sotto la collina */
-    var mLo = a > 0 ? .30 : .55, mHi = a > 0 ? .55 : .30;
-    var ylo = bot - mLo * d, yhi = top + mHi * d;
-    /* le due scale non devono divergere troppo, o la parabola diventa un imbuto */
-    var sx = W / (2 * hx), sy = H / (yhi - ylo);
-    if (sy > 1.7 * sx) {
-      var extra = H / (1.7 * sx) - (yhi - ylo);
-      ylo -= extra * (mLo / (mLo + mHi)); yhi += extra * (mHi / (mLo + mHi));
-    } else if (sy < .55 * sx) {
-      hx = W / (.55 * sy) / 2;
-    }
-    V.x0 = S.xv - hx; V.x1 = S.xv + hx;
-    V.y0 = ylo; V.y1 = yhi;
 
-    var span = V.y1 - V.y0;
-    S.sea.min = V.y0 + span * .02;
-    S.sea.max = V.y1 - span * .06;
-    /* partenza: sempre sotto la quota zero, ma dentro la conca quando la parabola
-       guarda in su, altrimenti il terreno nasconderebbe del tutto l'acqua */
-    /* abbastanza in basso da lasciare una corsa vera al dito (~22% dello schermo),
-       ma dentro la conca quando si può, così l'acqua si vede subito */
-    S.sea.start = Math.max(S.sea.min,
-      Math.min(-span * .22, (a > 0 && S.yv < 0) ? S.yv * .62 : 0));
+    /* curvatura di riferimento: radici a 55% della larghezza, vertice a 30% dell'altezza */
+    var K = (H * .30) / Math.pow(W * .275, 2);
+    var scaleX, scaleY;
+    if (S.nr === 1) {
+      /* vertice esattamente sulla quota zero: lo zoom verticale non ha vincoli */
+      scaleX = W * .1375;
+      scaleY = K * scaleX * scaleX / absA;
+    } else {
+      var gap = (S.nr === 2 ? H * .30 : H * .18);   /* px fra vertice e quota zero */
+      scaleY = gap / Math.abs(S.yv);
+      scaleX = Math.sqrt(absA * scaleY / K);
+    }
+
+    /* altezza della quota zero sullo schermo, scelta per lasciare cielo sopra,
+       terra sotto e corsa al mare */
+    var zeroPx;
+    if (S.nr === 2) zeroPx = a > 0 ? H * .40 : H * .60;
+    else if (S.nr === 1) zeroPx = a > 0 ? H * .52 : H * .48;
+    else zeroPx = a > 0 ? H * .66 : H * .34;
+
+    var spanX = W / scaleX, spanY = H / scaleY;
+    V.x0 = S.xv - (W / 2) / scaleX; V.x1 = V.x0 + spanX;
+    V.y0 = -spanY * (H - zeroPx) / H; V.y1 = V.y0 + spanY;
+
+    S.sea.min = V.y0 + spanY * .02;
+    S.sea.max = V.y1 - spanY * .06;
+    /* il mare parte 22% di schermo sotto lo zero: corsa vera per il dito e, quando la
+       parabola guarda in su, già dentro la conca */
+    S.sea.start = P2Y(zeroPx + H * .22);
     if (S.phase === 'setup' || S.phase === 'bend') S.sea.y = S.sea.start;
   }
 
