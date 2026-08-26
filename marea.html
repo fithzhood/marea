@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-store">
+<meta name="theme-color" content="#0d3b5c">
+<title>Marea — disequazioni di secondo grado</title>
+<link rel="stylesheet" href="marea.css?v=1">
+</head>
+<body>
+<div id="app">
+
+  <header id="hud">
+    <div id="progress">
+      <span class="pip" data-step="bend"></span>
+      <span class="pip" data-step="sea"></span>
+      <span class="pip" data-step="pick"></span>
+      <span class="pip" data-step="done"></span>
+    </div>
+    <div id="eq-display"></div>
+    <div class="hud-btns">
+      <button id="btn-help" type="button" aria-label="Aiuto">?</button>
+      <button id="btn-restart" type="button" aria-label="Ricomincia">&#8635;</button>
+    </div>
+  </header>
+
+  <div id="stage">
+    <canvas id="scene"></canvas>
+    <div id="flash"></div>
+  </div>
+
+  <div id="axis-strip" hidden>
+    <div id="axis-line"></div>
+    <div id="axis-zones"></div>
+    <div id="axis-marks"></div>
+  </div>
+
+  <footer id="panel">
+    <div id="panel-scroll">
+      <p id="hint">&nbsp;</p>
+      <div id="calc" hidden></div>
+    </div>
+    <div id="actions"></div>
+  </footer>
+
+  <!-- ─── schermata di inserimento ─── -->
+  <div id="setup">
+    <div class="setup-inner">
+      <h1>Marea<span class="sub">disequazioni di secondo grado</span></h1>
+
+      <p id="setup-tip">Tocca i numeri per cambiarli</p>
+
+      <div id="eq-builder">
+        <button class="coef" data-k="a" type="button"></button><span class="lit">x&sup2;</span>
+        <span class="sgn" data-for="b"></span><button class="coef" data-k="b" type="button"></button><span class="lit">x</span>
+        <span class="sgn" data-for="c"></span><button class="coef" data-k="c" type="button"></button>
+        <button id="op-chip" type="button"></button><span class="lit">0</span>
+      </div>
+
+      <p id="setup-warn">&nbsp;</p>
+
+      <div id="pad" hidden>
+        <button class="key" data-key="7">7</button>
+        <button class="key" data-key="8">8</button>
+        <button class="key" data-key="9">9</button>
+        <button class="key" data-key="4">4</button>
+        <button class="key" data-key="5">5</button>
+        <button class="key" data-key="6">6</button>
+        <button class="key" data-key="1">1</button>
+        <button class="key" data-key="2">2</button>
+        <button class="key" data-key="3">3</button>
+        <button class="key wide" data-key="neg">&plusmn;</button>
+        <button class="key" data-key="0">0</button>
+        <button class="key" data-key="del">&#9003;</button>
+      </div>
+
+      <div class="setup-actions">
+        <button id="btn-random" type="button">&#127922; A caso</button>
+        <button id="btn-start" type="button" class="primary">Comincia</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── riquadro di aiuto ─── -->
+  <div id="helpbox" hidden>
+    <div class="help-inner">
+      <h2 id="help-title"></h2>
+      <div id="help-body"></div>
+      <button id="help-close" type="button" class="primary">Ho capito</button>
+    </div>
+  </div>
+
+</div>
+<script src="marea.js?v=1"></script>
+</body>
+</html>

@@ -1,0 +1,951 @@
+/* Marea — disequazioni di secondo grado risolte alzando il mare */
+(function () {
+  'use strict';
+
+  /* ═══════════════ utilità ═══════════════ */
+  var $ = function (s) { return document.querySelector(s); };
+  var MINUS = '−';
+
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+  function easeInOut(t) { return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+  function randInt(a, b) { return a + Math.floor(Math.random() * (b - a + 1)); }
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  function buzz(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+
+  function hex(c) {
+    return [parseInt(c.substr(1, 2), 16), parseInt(c.substr(3, 2), 16), parseInt(c.substr(5, 2), 16)];
+  }
+  function mixColor(c1, c2, t) {
+    var a = hex(c1), b = hex(c2);
+    return 'rgb(' + Math.round(lerp(a[0], b[0], t)) + ',' + Math.round(lerp(a[1], b[1], t)) + ',' + Math.round(lerp(a[2], b[2], t)) + ')';
+  }
+
+  /* numeri all'italiana: intero, frazione esatta, oppure decimale con virgola */
+  function fmtNum(v) {
+    if (!isFinite(v)) return v > 0 ? '+∞' : MINUS + '∞';
+    if (Math.abs(v - Math.round(v)) < 1e-9) return String(Math.round(v)).replace('-', MINUS);
+    for (var d = 2; d <= 16; d++) {
+      var n = v * d;
+      if (Math.abs(n - Math.round(n)) < 1e-9) {
+        n = Math.round(n);
+        var sg = n < 0 ? MINUS : '';
+        return sg + Math.abs(n) + '/' + d;
+      }
+    }
+    return v.toFixed(2).replace('-', MINUS).replace('.', ',');
+  }
+  function isExact(v) {
+    if (Math.abs(v - Math.round(v)) < 1e-9) return true;
+    for (var d = 2; d <= 16; d++) { var n = v * d; if (Math.abs(n - Math.round(n)) < 1e-9) return true; }
+    return false;
+  }
+  function fmtInt(n) { return String(n).replace('-', MINUS); }
+
+  /* per righello e quota: sempre decimale, mai frazione */
+  function fmtDec(v) {
+    var a = Math.abs(v);
+    var s = v.toFixed(a >= 10 ? 0 : a >= 1 ? 1 : 2);
+    if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\.$/, '');
+    if (s === '-0') s = '0';
+    return s.replace('-', MINUS).replace('.', ',');
+  }
+
+  var OPS = ['>', '<', '>=', '<='];
+  function opSym(op) { return op === '>' ? '>' : op === '<' ? '<' : op === '>=' ? '≥' : '≤'; }
+
+  function eqString(a, b, c, op) {
+    var s = '';
+    s += (a === 1 ? '' : a === -1 ? MINUS : fmtInt(a)) + 'x²';
+    if (b !== 0) s += (b > 0 ? ' + ' : ' ' + MINUS + ' ') + (Math.abs(b) === 1 ? '' : Math.abs(b)) + 'x';
+    if (c !== 0) s += (c > 0 ? ' + ' : ' ' + MINUS + ' ') + Math.abs(c);
+    return s + ' <span class="op">' + opSym(op) + '</span> 0';
+  }
+  function polyString(a, b, c) {
+    var s = '';
+    s += (a === 1 ? '' : a === -1 ? MINUS : fmtInt(a)) + 'x²';
+    if (b !== 0) s += (b > 0 ? ' + ' : ' ' + MINUS + ' ') + (Math.abs(b) === 1 ? '' : Math.abs(b)) + 'x';
+    if (c !== 0) s += (c > 0 ? ' + ' : ' ' + MINUS + ' ') + Math.abs(c);
+    return s;
+  }
+
+  /* ═══════════════ stato ═══════════════ */
+  var S = {
+    phase: 'setup',           // setup | bend | sea | pick | done
+    a: 1, b: -2, c: -3, op: '>',
+    D: 0, r1: null, r2: null, nr: 0, xv: 0, yv: 0,
+    zones: [], okZones: [], picks: {}, attempts: 0,
+    bend: { d: 0, target: 0, morph: 0, dragging: false, touched: false, busy: false },
+    sea: { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 },
+    trees: [],
+    t: 0
+  };
+  var V = { x0: -5, x1: 5, y0: -5, y1: 5 };
+  var W = 0, H = 0;
+
+  var stage = $('#stage'), cv = $('#scene'), ctx = cv.getContext('2d');
+  var hintEl = $('#hint'), actionsEl = $('#actions'), calcEl = $('#calc');
+  var flashEl = $('#flash'), stripEl = $('#axis-strip');
+  var zonesEl = $('#axis-zones'), marksEl = $('#axis-marks');
+
+  function f(x) { return (S.a * x + S.b) * x + S.c; }
+
+  /* ═══════════════ vista ═══════════════ */
+  function computeView() {
+    var a = S.a;
+    S.xv = -S.b / (2 * a);
+    S.yv = f(S.xv);
+    /* mezza larghezza: le radici devono stare comode dentro il quadro */
+    var hx = S.nr === 2 ? (S.r2 - S.r1) * 1.15
+                        : 2.2 * Math.sqrt(Math.max(Math.abs(S.yv), .5) / Math.abs(a));
+    hx = Math.max(hx, 1.2);
+    /* fascia verticale: contiene il vertice e la quota zero, con cielo sopra e terra sotto */
+    var top = Math.max(S.yv, 0), bot = Math.min(S.yv, 0);
+    var d = Math.max(top - bot, 1);
+    /* il margine largo va dove la parabola apre: cielo sopra la valle, mare sotto la collina */
+    var mLo = a > 0 ? .30 : .55, mHi = a > 0 ? .55 : .30;
+    var ylo = bot - mLo * d, yhi = top + mHi * d;
+    /* le due scale non devono divergere troppo, o la parabola diventa un imbuto */
+    var sx = W / (2 * hx), sy = H / (yhi - ylo);
+    if (sy > 1.7 * sx) {
+      var extra = H / (1.7 * sx) - (yhi - ylo);
+      ylo -= extra * (mLo / (mLo + mHi)); yhi += extra * (mHi / (mLo + mHi));
+    } else if (sy < .55 * sx) {
+      hx = W / (.55 * sy) / 2;
+    }
+    V.x0 = S.xv - hx; V.x1 = S.xv + hx;
+    V.y0 = ylo; V.y1 = yhi;
+
+    var span = V.y1 - V.y0;
+    S.sea.min = V.y0 + span * .02;
+    S.sea.max = V.y1 - span * .06;
+    /* partenza: sempre sotto la quota zero, ma dentro la conca quando la parabola
+       guarda in su, altrimenti il terreno nasconderebbe del tutto l'acqua */
+    /* abbastanza in basso da lasciare una corsa vera al dito (~22% dello schermo),
+       ma dentro la conca quando si può, così l'acqua si vede subito */
+    S.sea.start = Math.max(S.sea.min,
+      Math.min(-span * .22, (a > 0 && S.yv < 0) ? S.yv * .62 : 0));
+    if (S.phase === 'setup' || S.phase === 'bend') S.sea.y = S.sea.start;
+  }
+
+  function X2P(x) { return (x - V.x0) / (V.x1 - V.x0) * W; }
+  function Y2P(y) { return H - (y - V.y0) / (V.y1 - V.y0) * H; }
+  function P2X(p) { return V.x0 + p / W * (V.x1 - V.x0); }
+  function P2Y(p) { return V.y0 + (H - p) / H * (V.y1 - V.y0); }
+
+  /* profilo del terreno in pixel, con la piega in corso */
+  function ground(px) {
+    if (S.phase === 'bend' || S.bend.morph < 1) {
+      var t = (px - W / 2) / (W / 2);
+      var bar = H * .5 + S.bend.d * (1 - t * t);
+      if (S.bend.morph <= 0) return bar;
+      var par = Y2P(f(P2X(px)));
+      return lerp(bar, par, easeInOut(S.bend.morph));
+    }
+    return Y2P(f(P2X(px)));
+  }
+
+  /* ═══════════════ tween minimale ═══════════════ */
+  var tweens = [], CLOCK = 0;   /* un solo orologio: così le animazioni si possono anche pilotare a mano */
+  function tween(get, set, to, ms, done) {
+    var from = get(), t0 = CLOCK;
+    tweens.push({ step: function () {
+      var p = clamp((CLOCK - t0) / ms, 0, 1);
+      set(lerp(from, to, easeInOut(p)));
+      if (p >= 1) { if (done) done(); return true; }
+      return false;
+    } });
+  }
+  function runTweens() {
+    for (var i = tweens.length - 1; i >= 0; i--) if (tweens[i].step()) tweens.splice(i, 1);
+  }
+  function advance(ms) { CLOCK += ms; S.t = CLOCK / 1000; runTweens(); draw(); }
+
+  /* ═══════════════ disegno ═══════════════ */
+  var clouds = [
+    { x: .10, y: .16, s: 1.0, v: 7 },
+    { x: .55, y: .09, s: .72, v: 4.5 },
+    { x: .82, y: .26, s: .85, v: 9 }
+  ];
+
+  function drawSky() {
+    var g = ctx.createLinearGradient(0, 0, 0, H);
+    /* il fondo del cielo resta pallido ma non bianco, o l'acqua non stacca più */
+    g.addColorStop(0, '#1f6fb5'); g.addColorStop(.55, '#63b2dd'); g.addColorStop(1, '#a6d8ea');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    var sx = W * .84, sy = H * .15, r = Math.min(W, H) * .062;
+    var gg = ctx.createRadialGradient(sx, sy, r * .3, sx, sy, r * 3.2);
+    gg.addColorStop(0, 'rgba(255,236,170,.75)'); gg.addColorStop(1, 'rgba(255,236,170,0)');
+    ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(sx, sy, r * 3.2, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = '#ffe98a';
+    ctx.beginPath(); ctx.arc(sx, sy, r, 0, 6.2832); ctx.fill();
+
+    for (var i = 0; i < clouds.length; i++) {
+      var c = clouds[i];
+      var x = ((c.x * W + S.t * c.v) % (W + 160)) - 80;
+      drawCloud(x, c.y * H, Math.min(W, H) * .055 * c.s);
+    }
+  }
+  function drawCloud(x, y, r) {
+    ctx.fillStyle = 'rgba(255,255,255,.82)';
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, 6.2832);
+    ctx.arc(x + r * .95, y + r * .18, r * .78, 0, 6.2832);
+    ctx.arc(x - r * .9, y + r * .22, r * .66, 0, 6.2832);
+    ctx.arc(x + r * .12, y + r * .45, r * .72, 0, 6.2832);
+    ctx.fill();
+  }
+
+  function groundPath() {
+    ctx.beginPath();
+    ctx.moveTo(-4, ground(-4));
+    for (var px = 0; px <= W; px += 3) ctx.lineTo(px, ground(px));
+    ctx.lineTo(W + 4, ground(W + 4));
+  }
+
+  function drawGround() {
+    var m = S.bend.morph;
+    /* corpo del terreno */
+    if (m > 0) {
+      ctx.save(); ctx.globalAlpha = m;
+      groundPath();
+      ctx.lineTo(W + 4, H + 60); ctx.lineTo(-4, H + 60); ctx.closePath();
+      var g = ctx.createLinearGradient(0, Y2P(Math.max(S.yv, 0)) - 40, 0, H);
+      g.addColorStop(0, '#7d5f3c'); g.addColorStop(.45, '#63492c'); g.addColorStop(1, '#3f2e1c');
+      ctx.fillStyle = g; ctx.fill();
+      /* strati, perché la terra non sia una macchia piatta */
+      ctx.strokeStyle = 'rgba(0,0,0,.07)'; ctx.lineWidth = 7;
+      for (var k = 1; k <= 3; k++) {
+        ctx.save(); ctx.translate(0, k * 26);
+        groundPath(); ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+    /* crosta: la barra che diventa erba */
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    groundPath();
+    ctx.lineWidth = lerp(13, 11, m);
+    ctx.strokeStyle = mixColor('#9aa7b2', '#3f6b2c', m);
+    ctx.stroke();
+    groundPath();
+    ctx.lineWidth = lerp(7, 5, m);
+    ctx.strokeStyle = mixColor('#cdd7df', '#7cc255', m);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawTrees() {
+    if (S.bend.morph < .55) return;
+    ctx.save(); ctx.globalAlpha = (S.bend.morph - .55) / .45;
+    for (var i = 0; i < S.trees.length; i++) {
+      var tx = X2P(S.trees[i].x), gy = ground(tx);
+      if (gy < -30 || gy > H + 30) continue;
+      var s = S.trees[i].s * Math.min(W, H) * .036;
+      ctx.fillStyle = '#5a3f26';
+      ctx.fillRect(tx - s * .11, gy - s * .95, s * .22, s * .95);
+      ctx.fillStyle = '#2f6b2a';
+      for (var k = 0; k < 3; k++) {
+        var yy = gy - s * (.55 + k * .5), ww = s * (.62 - k * .13);
+        ctx.beginPath(); ctx.moveTo(tx, yy - s * .75);
+        ctx.lineTo(tx + ww, yy); ctx.lineTo(tx - ww, yy); ctx.closePath(); ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  function waveAt(px) {
+    return Math.sin(px * .042 + S.t * 2.1) * 2.1 + Math.sin(px * .019 - S.t * 1.35) * 1.5;
+  }
+
+  function drawSea() {
+    if (S.phase === 'bend' || S.phase === 'setup') return;
+    var base = Y2P(S.sea.y);
+    var top = [], bot = [], px;
+    for (px = -4; px <= W + 4; px += 4) {
+      var ty = base + waveAt(px);
+      top.push(ty);
+      bot.push(Math.max(ty, Math.min(ground(px), H + 60)));
+    }
+    ctx.beginPath();
+    var i = 0;
+    for (px = -4; px <= W + 4; px += 4, i++) { if (i === 0) ctx.moveTo(px, top[i]); else ctx.lineTo(px, top[i]); }
+    i--;
+    for (px = px - 4; px >= -4; px -= 4, i--) ctx.lineTo(px, bot[i]);
+    ctx.closePath();
+    var g = ctx.createLinearGradient(0, base, 0, H);
+    g.addColorStop(0, 'rgba(64,178,232,.82)'); g.addColorStop(.45, 'rgba(20,112,182,.90)'); g.addColorStop(1, 'rgba(7,45,84,.96)');
+    ctx.fillStyle = g; ctx.fill();
+
+    /* superficie: solo nei tratti dove l'acqua esiste davvero, non sopra la terraferma */
+    ctx.beginPath(); i = 0;
+    var open = false;
+    for (px = -4; px <= W + 4; px += 4, i++) {
+      if (bot[i] - top[i] > 1.5) {
+        if (!open) { ctx.moveTo(px, top[i]); open = true; } else ctx.lineTo(px, top[i]);
+      } else open = false;
+    }
+    ctx.strokeStyle = 'rgba(207,240,255,.9)'; ctx.lineWidth = 2.2; ctx.stroke();
+  }
+
+  /* linea della quota corrente + righello */
+  function drawLevel() {
+    if (S.phase === 'bend' || S.phase === 'setup') return;
+    var y = Y2P(S.sea.y);
+    if (!S.sea.locked) {           /* agganciato allo zero coincide con l'asse: una riga basta */
+      ctx.save();
+      ctx.setLineDash([7, 6]);
+      ctx.strokeStyle = 'rgba(255,255,255,.6)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      ctx.restore();
+    }
+
+    if (!S.sea.locked) {
+      /* quota corrente + invito a trascinare, tutto a sinistra per non coprire il righello */
+      var lab = '⇕   y = ' + fmtDec(S.sea.y);
+      ctx.font = '700 13.5px ' + FONT; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      var wpx = ctx.measureText(lab).width + 20;
+      ctx.fillStyle = 'rgba(9,32,50,.88)';
+      roundRect(9, y - 14, wpx, 28, 9); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = '#cfeaff'; ctx.fillText(lab, 19, y + 1);
+    }
+  }
+
+  function drawRuler() {
+    if (S.phase === 'setup' || S.phase === 'bend') return;
+    var span = V.y1 - V.y0;
+    var raw = span / 6, mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10));
+    var n = raw / mag, step = (n >= 5 ? 5 : n >= 2 ? 2 : 1) * mag;
+    ctx.save();
+    ctx.font = '600 11px ' + FONT; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    var start = Math.ceil(V.y0 / step) * step;
+    for (var v = start; v <= V.y1; v += step) {
+      var y = Y2P(v), zero = Math.abs(v) < 1e-9;
+      if (zero) continue;
+      ctx.strokeStyle = 'rgba(255,255,255,.3)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(W - 8, y); ctx.lineTo(W - 2, y); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,.62)';
+      ctx.fillText(fmtDec(v), W - 11, y);
+    }
+    /* asse x: la quota zero */
+    var y0 = Y2P(0);
+    ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(W, y0); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.95)';
+    ctx.font = '700 12px ' + FONT;
+    ctx.fillText('0', W - 11, y0 - 9);
+    ctx.restore();
+  }
+
+  /* rive, divisori e zone selezionabili */
+  function drawZones() {
+    if (!S.sea.revealed) return;
+    var roots = S.nr === 2 ? [S.r1, S.r2] : S.nr === 1 ? [S.r1] : [];
+    var i;
+    if (S.phase === 'pick' || S.phase === 'done') {
+      var yz = Y2P(0), band = Math.min(H * .16, 90);
+      for (i = 0; i < S.zones.length; i++) {
+        var z = S.zones[i];
+        var xa = isFinite(z.lo) ? X2P(z.lo) : -2, xb = isFinite(z.hi) ? X2P(z.hi) : W + 2;
+        var on = !!S.picks[i], rgb = null;
+        if (S.phase === 'done') {
+          var right = S.okZones.indexOf(i) >= 0;
+          if (on && right) rgb = '78,192,106';
+          else if (on && !right) rgb = '239,106,90';
+          else if (!on && right) rgb = '255,202,71';
+        } else if (on) rgb = '78,192,106';
+        /* alone sfumato attorno all'asse: segnala la zona senza tingere il cielo */
+        if (rgb) {
+          var g2 = ctx.createLinearGradient(0, yz - band, 0, yz + band);
+          g2.addColorStop(0, 'rgba(' + rgb + ',0)');
+          g2.addColorStop(.5, 'rgba(' + rgb + ',.28)');
+          g2.addColorStop(1, 'rgba(' + rgb + ',0)');
+          ctx.fillStyle = g2;
+          ctx.fillRect(xa, yz - band, xb - xa, band * 2);
+          ctx.fillStyle = 'rgb(' + rgb + ')';
+          ctx.fillRect(xa + 1.5, yz - 6, xb - xa - 3, 12);
+        } else if (S.phase === 'pick') {
+          /* zona ancora da decidere: uno slot vuoto da riempire */
+          ctx.save();
+          ctx.setLineDash([6, 5]);
+          ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.6;
+          roundRect(xa + 3, yz - 6, Math.max(8, xb - xa - 6), 12, 4); ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+    ctx.save();
+    ctx.setLineDash([5, 5]); ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.4;
+    for (i = 0; i < roots.length; i++) {
+      var rx = X2P(roots[i]);
+      ctx.beginPath(); ctx.moveTo(rx, 0); ctx.lineTo(rx, H); ctx.stroke();
+    }
+    ctx.restore();
+    /* pallini sulla riva */
+    var full = (S.op === '>=' || S.op === '<=');
+    for (i = 0; i < roots.length; i++) {
+      var px = X2P(roots[i]), py = Y2P(0);
+      ctx.beginPath(); ctx.arc(px, py, 6.5, 0, 6.2832);
+      ctx.fillStyle = full ? '#ffca47' : '#0d2233';
+      ctx.fill(); ctx.strokeStyle = '#ffca47'; ctx.lineWidth = 2.5; ctx.stroke();
+    }
+  }
+
+  /* maniglia della piega */
+  function drawHandle() {
+    if (S.phase !== 'bend' || S.bend.busy) return;
+    var y = ground(W / 2), pulse = S.bend.touched ? 0 : (Math.sin(S.t * 3) * .5 + .5);
+    ctx.save();
+    ctx.globalAlpha = .55 + pulse * .45;
+    ctx.fillStyle = 'rgba(13,34,51,.9)';
+    ctx.beginPath(); ctx.arc(W / 2, y, 21, 0, 6.2832); ctx.fill();
+    ctx.strokeStyle = '#ffca47'; ctx.lineWidth = 2.4; ctx.stroke();
+    ctx.fillStyle = '#ffca47'; ctx.font = '700 12px ' + FONT;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('▲', W / 2, y - 8);
+    ctx.fillText('▼', W / 2, y + 9);
+    ctx.restore();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  var FONT = '"Segoe UI",-apple-system,Roboto,sans-serif';
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawSky();
+    drawGround();
+    drawTrees();
+    drawSea();
+    drawZones();
+    drawRuler();
+    drawLevel();
+    drawHandle();
+  }
+
+  var last = 0;
+  function loop(now) {
+    if (!last) last = now;
+    advance(Math.min(now - last, 50));
+    last = now;
+    requestAnimationFrame(loop);
+  }
+
+  /* ═══════════════ dimensioni ═══════════════ */
+  function resize() {
+    var r = stage.getBoundingClientRect();
+    W = Math.max(1, r.width); H = Math.max(1, r.height);
+    var dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    computeView();
+    layoutStrip();
+  }
+  window.addEventListener('resize', resize);
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(stage);
+
+  /* ═══════════════ problema ═══════════════ */
+  function solve() {
+    var a = S.a, b = S.b, c = S.c;
+    S.D = b * b - 4 * a * c;
+    if (S.D > 1e-9) {
+      var s = Math.sqrt(S.D);
+      var p = (-b - s) / (2 * a), q = (-b + s) / (2 * a);
+      S.r1 = Math.min(p, q); S.r2 = Math.max(p, q); S.nr = 2;
+    } else if (S.D > -1e-9) {
+      S.D = 0; S.r1 = S.r2 = -b / (2 * a); S.nr = 1;
+    } else { S.r1 = S.r2 = null; S.nr = 0; }
+
+    /* zone e zone corrette */
+    S.zones = [];
+    if (S.nr === 2) {
+      S.zones.push({ lo: -Infinity, hi: S.r1, sample: S.r1 - 1 });
+      S.zones.push({ lo: S.r1, hi: S.r2, sample: (S.r1 + S.r2) / 2 });
+      S.zones.push({ lo: S.r2, hi: Infinity, sample: S.r2 + 1 });
+    } else if (S.nr === 1) {
+      S.zones.push({ lo: -Infinity, hi: S.r1, sample: S.r1 - 1 });
+      S.zones.push({ lo: S.r1, hi: Infinity, sample: S.r1 + 1 });
+    } else {
+      S.zones.push({ lo: -Infinity, hi: Infinity, sample: S.xv });
+    }
+    var wantPos = (S.op === '>' || S.op === '>=');
+    S.okZones = [];
+    for (var i = 0; i < S.zones.length; i++) {
+      var v = f(S.zones[i].sample);
+      if (wantPos ? v > 0 : v < 0) S.okZones.push(i);
+    }
+  }
+
+  /* ═══════════════ soluzione in parole ═══════════════ */
+  function buildSolution() {
+    var inc = (S.op === '>=' || S.op === '<=');
+    var roots = S.nr === 2 ? [S.r1, S.r2] : S.nr === 1 ? [S.r1] : [];
+    var ok = [], i;
+    for (i = 0; i < S.zones.length; i++) ok.push(S.okZones.indexOf(i) >= 0);
+
+    var parts = [];   /* {lo,hi,loInc,hiInc} */
+    var cur = null;
+    for (i = 0; i < S.zones.length; i++) {
+      if (ok[i]) {
+        if (cur) { cur.hi = S.zones[i].hi; cur.hiInc = false; }
+        else cur = { lo: S.zones[i].lo, hi: S.zones[i].hi, loInc: false, hiInc: false };
+        /* il confine destro entra nella soluzione? */
+        if (i < S.zones.length - 1 && inc) {
+          if (ok[i + 1]) { continue; }          /* fonde con la prossima */
+          cur.hiInc = true;
+        }
+        parts.push(cur); cur = null;
+      } else if (inc && i < S.zones.length - 1) {
+        /* zona esclusa, ma la riva di destra è inclusa: punto isolato */
+        var r = roots[i];
+        if (!ok[i + 1]) parts.push({ lo: r, hi: r, loInc: true, hiInc: true, point: true });
+      }
+    }
+    /* la riva sinistra dei tratti che iniziano su una radice inclusa */
+    if (inc) {
+      for (i = 0; i < parts.length; i++) {
+        if (isFinite(parts[i].lo) && !parts[i].point) parts[i].loInc = true;
+      }
+    }
+    return parts;
+  }
+
+  function solutionText(parts) {
+    if (!parts.length) return '∅  (nessun valore di x)';
+    if (parts.length === 1 && !isFinite(parts[0].lo) && !isFinite(parts[0].hi)) return '∀x ∈ ℝ';
+    /* tutta la retta tranne un punto: si scrive meglio così */
+    if (parts.length === 2 && !isFinite(parts[0].lo) && !isFinite(parts[1].hi) &&
+        Math.abs(parts[0].hi - parts[1].lo) < 1e-9 && !parts[0].hiInc && !parts[1].loInc)
+      return '∀x ≠ ' + fmtNum(parts[0].hi);
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      if (p.point) { out.push('x = ' + fmtNum(p.lo)); continue; }
+      if (!isFinite(p.lo)) out.push('x ' + (p.hiInc ? '≤' : '<') + ' ' + fmtNum(p.hi));
+      else if (!isFinite(p.hi)) out.push('x ' + (p.loInc ? '≥' : '>') + ' ' + fmtNum(p.lo));
+      else out.push(fmtNum(p.lo) + ' ' + (p.loInc ? '≤' : '<') + ' x ' + (p.hiInc ? '≤' : '<') + ' ' + fmtNum(p.hi));
+    }
+    return out.join('  ∨  ');
+  }
+
+  function intervalText(parts) {
+    if (!parts.length) return '∅';
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      if (p.point) { out.push('{' + fmtNum(p.lo) + '}'); continue; }
+      var l = isFinite(p.lo) ? (p.loInc ? '[' : ']') + fmtNum(p.lo) : ']' + MINUS + '∞';
+      var r = isFinite(p.hi) ? fmtNum(p.hi) + (p.hiInc ? ']' : '[') : '+∞[';
+      out.push(l + '; ' + r);
+    }
+    return out.join(' ∪ ');
+  }
+
+  /* ═══════════════ striscia dell'asse x ═══════════════ */
+  function layoutStrip() {
+    if (S.phase !== 'pick' && S.phase !== 'done') return;
+    zonesEl.innerHTML = ''; marksEl.innerHTML = '';
+    var sw = stripEl.getBoundingClientRect().width;
+    for (var i = 0; i < S.zones.length; i++) {
+      var z = S.zones[i];
+      var xa = isFinite(z.lo) ? X2P(z.lo) / W * sw : 0;
+      var xb = isFinite(z.hi) ? X2P(z.hi) / W * sw : sw;
+      var d = document.createElement('div');
+      d.className = 'zone' + (S.picks[i] ? ' picked' : '');
+      d.style.left = (xa + 3) + 'px';
+      d.style.width = Math.max(10, xb - xa - 6) + 'px';
+      d.dataset.i = i;
+      zonesEl.appendChild(d);
+    }
+    var roots = S.nr === 2 ? [S.r1, S.r2] : S.nr === 1 ? [S.r1] : [];
+    var full = (S.op === '>=' || S.op === '<=');
+    for (var k = 0; k < roots.length; k++) {
+      var m = document.createElement('div');
+      m.className = 'mark';
+      m.style.left = (X2P(roots[k]) / W * sw) + 'px';
+      m.innerHTML = '<div class="dot' + (full ? ' full' : '') + '"></div>' +
+        '<div class="lbl">x' + (roots.length === 1 ? '₀' : k === 0 ? '₁' : '₂') + ' = ' + fmtNum(roots[k]) + '</div>';
+      marksEl.appendChild(m);
+    }
+  }
+  zonesEl.addEventListener('click', function (e) {
+    var z = e.target.closest('.zone');
+    if (z && S.phase === 'pick') togglePick(+z.dataset.i);
+  });
+
+  /* ═══════════════ interfaccia per fase ═══════════════ */
+  function setActions(list) {
+    actionsEl.innerHTML = '';
+    list.forEach(function (o) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = o.label;
+      if (o.cls) b.className = o.cls;
+      b.addEventListener('click', o.fn);
+      actionsEl.appendChild(b);
+    });
+  }
+  function setPips() {
+    var order = ['bend', 'sea', 'pick', 'done'];
+    var idx = order.indexOf(S.phase);
+    document.querySelectorAll('.pip').forEach(function (p, i) {
+      p.className = 'pip' + (i < idx ? ' done' : i === idx ? ' on' : '');
+    });
+  }
+  function say(html) { hintEl.innerHTML = html; }
+  function flash(txt, good) {
+    flashEl.textContent = txt;
+    flashEl.className = 'show ' + (good ? 'good' : 'bad');
+    setTimeout(function () { flashEl.className = ''; }, good ? 1300 : 1900);
+  }
+
+  function setPhase(p) {
+    S.phase = p;
+    setPips();
+    calcEl.hidden = (p !== 'sea' && p !== 'pick' && p !== 'done') || !S.sea.revealed;
+    stripEl.hidden = (p !== 'pick' && p !== 'done');
+    if (!stripEl.hidden) layoutStrip();
+
+    if (p === 'bend') {
+      say('Piega la barra: deve diventare il grafico di <b class="m">y = ' + polyString(S.a, S.b, S.c) + '</b>');
+      setActions([{ label: 'Cambia disequazione', cls: 'ghost', fn: openSetup }]);
+    } else if (p === 'sea') {
+      say('Il mare parte dal fondo. Alzalo fino alla quota che serve alla disequazione.');
+      setActions([
+        { label: '▼', fn: function () { nudge(-1); } },
+        { label: '▲', fn: function () { nudge(1); } }
+      ]);
+    } else if (p === 'pick') {
+      say('Tocca le zone che risolvono <b class="m">' + polyString(S.a, S.b, S.c) + ' ' + opSym(S.op) + ' 0</b>, poi conferma.');
+      setActions([{ label: 'Conferma', cls: 'primary', fn: check }]);
+    }
+  }
+
+  /* ═══════════════ fase 1 — la piega ═══════════════ */
+  function bendRelease() {
+    var d = S.bend.d;
+    if (Math.abs(d) < 22) { tween(function () { return S.bend.d; }, function (v) { S.bend.d = v; }, 0, 260); return; }
+    var wantDown = S.a > 0;          /* a>0 → il centro scende → valle */
+    var isDown = d > 0;
+    if (isDown === wantDown) {
+      S.bend.busy = true;
+      flash(wantDown ? 'Valle — concavità verso l’alto' : 'Collina — concavità verso il basso', true);
+      buzz(18);
+      S.bend.d = clamp(d, -H * .34, H * .34);
+      tween(function () { return S.bend.morph; }, function (v) { S.bend.morph = v; }, 1, 900, function () {
+        S.bend.busy = false;
+        S.sea.y = S.sea.start;
+        setPhase('sea');
+      });
+    } else {
+      flash('Con a = ' + fmtInt(S.a) + ' la piega va dall’altra parte', false);
+      buzz([14, 60, 14]);
+      tween(function () { return S.bend.d; }, function (v) { S.bend.d = v; }, 0, 420);
+    }
+  }
+
+  /* ═══════════════ fase 2 — la marea ═══════════════ */
+  function nudge(dir) {
+    if (S.sea.locked) return;
+    var st = (V.y1 - V.y0) * .035;
+    setSea(S.sea.y + dir * st);
+  }
+  function setSea(y) {
+    if (S.sea.locked) return;
+    var span = V.y1 - V.y0, prev = S.sea.y;
+    y = clamp(y, S.sea.min, S.sea.max);
+    /* aggancio alla quota zero: per vicinanza, oppure se un gesto veloce la scavalca */
+    if (Math.abs(y) < span * .035 || (prev < 0 && y >= 0) || (prev > 0 && y <= 0)) {
+      S.sea.y = 0;
+      revealRoots();
+    } else S.sea.y = y;
+  }
+
+  function revealRoots() {
+    if (S.sea.revealed) return;
+    S.sea.revealed = true; S.sea.locked = true; S.sea.dragging = false;
+    buzz(25);
+    var html = '<div class="row"><span>Δ = b² ' + MINUS + ' 4ac = ' + fmtInt(S.b) + '² ' + MINUS + ' 4·' + fmtInt(S.a) + '·' + fmtInt(S.c) + '</span><span>' + fmtInt(S.D) + '</span></div>';
+    if (S.nr === 2) {
+      html += '<div class="row"><span>rive del mare</span><span>x₁ = ' + rootLabel(S.r1) + ' , x₂ = ' + rootLabel(S.r2) + '</span></div>';
+      flash('Quota zero — due rive', true);
+    } else if (S.nr === 1) {
+      html += '<div class="row"><span>una sola riva</span><span>x₀ = ' + rootLabel(S.r1) + '</span></div>';
+      flash('Il mare sfiora la cima: una sola riva', true);
+    } else {
+      html += '<div class="row"><span>rive</span><span>nessuna</span></div>';
+      flash('Il terreno non tocca mai il mare', true);
+    }
+    calcEl.innerHTML = html; calcEl.hidden = false;
+    say('L’acqua è a <b>quota 0</b>: sopra il pelo dell’acqua ' + polyString(S.a, S.b, S.c) + ' è positivo, sotto è negativo.');
+    setActions([{ label: 'Avanti', cls: 'primary', fn: function () { setPhase('pick'); } }]);
+  }
+  function rootLabel(r) {
+    return isExact(r) ? fmtNum(r) : '≈ ' + r.toFixed(2).replace('-', MINUS).replace('.', ',');
+  }
+
+  /* ═══════════════ fase 3 — la scelta ═══════════════ */
+  function togglePick(i) {
+    if (S.phase !== 'pick') return;
+    S.picks[i] = !S.picks[i];
+    buzz(8);
+    layoutStrip();
+    var n = Object.keys(S.picks).filter(function (k) { return S.picks[k]; }).length;
+    setActions([{ label: n ? 'Conferma' : 'Nessuna zona: conferma', cls: 'primary', fn: check }]);
+  }
+
+  function check() {
+    var chosen = [], i;
+    for (i = 0; i < S.zones.length; i++) if (S.picks[i]) chosen.push(i);
+    var right = chosen.length === S.okZones.length &&
+      chosen.every(function (z) { return S.okZones.indexOf(z) >= 0; });
+
+    if (!right) {
+      S.attempts++;
+      buzz([14, 60, 14]);
+      document.querySelectorAll('.zone').forEach(function (el) {
+        var i = +el.dataset.i, on = !!S.picks[i], ok = S.okZones.indexOf(i) >= 0;
+        if (on !== ok) { el.classList.add('wrong'); setTimeout(function () { el.classList.remove('wrong'); }, 420); }
+      });
+      var wantPos = (S.op === '>' || S.op === '>=');
+      if (S.attempts === 1) flash('Non ci siamo. Riguarda il verso della disequazione.', false);
+      else {
+        flash(wantPos ? 'Cerca il terreno EMERSO' : 'Cerca il terreno SOMMERSO', false);
+        say('<b class="m">' + polyString(S.a, S.b, S.c) + ' ' + opSym(S.op) + ' 0</b> chiede dove la quota del terreno è ' +
+          (wantPos ? 'positiva: la terra <b>sopra</b> il pelo dell’acqua.' : 'negativa: il fondale <b>sotto</b> il pelo dell’acqua.'));
+      }
+      return;
+    }
+
+    buzz(30);
+    flash('Esatto!', true);
+    var parts = buildSolution();
+    calcEl.innerHTML =
+      '<div class="row"><span>Δ</span><span>' + fmtInt(S.D) + (S.nr === 2 ? ' > 0' : S.nr === 1 ? ' = 0' : ' < 0') + '</span></div>' +
+      '<div class="row"><span>concavità</span><span>' + (S.a > 0 ? 'verso l’alto (valle)' : 'verso il basso (collina)') + '</span></div>' +
+      (S.nr ? '<div class="row"><span>' + (S.nr === 2 ? 'x₁ , x₂' : 'x₀') + '</span><span>' +
+        (S.nr === 2 ? rootLabel(S.r1) + ' , ' + rootLabel(S.r2) : rootLabel(S.r1)) + '</span></div>'
+              : '<div class="row"><span>rive</span><span>nessuna: il terreno non tocca il mare</span></div>') +
+      '<div class="sol">' + solutionText(parts) + '</div>' +
+      '<div class="row" style="justify-content:center;opacity:.8;margin-top:2px"><span>' + intervalText(parts) + '</span></div>';
+    calcEl.hidden = false;
+    say('Soluzione trovata.');
+    setActions([
+      { label: 'Nuova', cls: 'primary', fn: function () { randomProblem(); startProblem(); } },
+      { label: 'Scrivi tu', cls: 'ghost', fn: openSetup }
+    ]);
+    setPhase('done');
+  }
+
+  /* ═══════════════ tocchi sul canvas ═══════════════ */
+  var ptr = { down: false, x0: 0, y0: 0, moved: 0 };
+  cv.addEventListener('pointerdown', function (e) {
+    try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+    var r = cv.getBoundingClientRect();
+    ptr.down = true; ptr.x0 = e.clientX - r.left; ptr.y0 = e.clientY - r.top; ptr.moved = 0;
+    if (S.phase === 'bend' && !S.bend.busy) {
+      S.bend.dragging = true; S.bend.touched = true;
+      S.bend.dragY0 = ptr.y0; S.bend.dragD0 = S.bend.d;
+    }
+    if (S.phase === 'sea' && !S.sea.locked) {
+      S.sea.dragging = true; S.sea.dragY0 = ptr.y0; S.sea.dragS0 = S.sea.y;
+    }
+  });
+  cv.addEventListener('pointermove', function (e) {
+    if (!ptr.down) return;
+    var r = cv.getBoundingClientRect();
+    var x = e.clientX - r.left, y = e.clientY - r.top;
+    ptr.moved = Math.max(ptr.moved, Math.abs(x - ptr.x0) + Math.abs(y - ptr.y0));
+    if (S.bend.dragging) S.bend.d = clamp(S.bend.dragD0 + (y - S.bend.dragY0), -H * .34, H * .34);
+    if (S.sea.dragging) {
+      var perPx = (V.y1 - V.y0) / H;
+      setSea(S.sea.dragS0 + (S.sea.dragY0 - y) * perPx);
+    }
+  });
+  function endPointer() {
+    if (!ptr.down) return;
+    ptr.down = false;
+    if (S.bend.dragging) { S.bend.dragging = false; bendRelease(); }
+    if (S.sea.dragging) S.sea.dragging = false;
+    if (S.phase === 'pick' && ptr.moved < 12) {
+      var xw = P2X(ptr.x0);
+      for (var i = 0; i < S.zones.length; i++) {
+        var z = S.zones[i];
+        if (xw > (isFinite(z.lo) ? z.lo : -1e9) && xw < (isFinite(z.hi) ? z.hi : 1e9)) { togglePick(i); break; }
+      }
+    }
+  }
+  cv.addEventListener('pointerup', endPointer);
+  cv.addEventListener('pointercancel', endPointer);
+
+  /* ═══════════════ avvio di un problema ═══════════════ */
+  function startProblem() {
+    solve();
+    S.bend = { d: 0, target: 0, morph: 0, dragging: false, touched: false, busy: false };
+    S.sea = { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 };
+    S.picks = {}; S.attempts = 0;
+    computeView();
+    S.sea.y = S.sea.start;
+    S.trees = [];
+    for (var i = 0; i < 11; i++) {
+      S.trees.push({ x: V.x0 + (i + .5 + (i % 3) * .18) / 11 * (V.x1 - V.x0), s: .8 + (i % 4) * .12 });
+    }
+    $('#eq-display').innerHTML = eqString(S.a, S.b, S.c, S.op);
+    calcEl.hidden = true;
+    $('#setup').classList.add('hide');
+    setTimeout(function () { $('#setup').hidden = true; resize(); }, 380);
+    setPhase('bend');
+  }
+
+  function randomProblem() {
+    var a, b, c, r1, r2, kind, guard = 0;
+    do {
+      kind = pick(['two', 'two', 'two', 'two', 'double', 'none']);
+      a = pick([1, 1, 1, 1, -1, -1, -1, 2, -2, 3]);
+      if (kind === 'two') {
+        do { r1 = randInt(-6, 6); r2 = randInt(-6, 6); } while (r1 === r2);
+        if (r1 > r2) { var t = r1; r1 = r2; r2 = t; }
+        b = -a * (r1 + r2); c = a * r1 * r2;
+      } else if (kind === 'double') {
+        r1 = randInt(-4, 4);
+        b = -2 * a * r1; c = a * r1 * r1;
+      } else {
+        b = randInt(-6, 6);
+        var lim = b * b / (4 * a);
+        c = a > 0 ? Math.ceil(lim) + randInt(1, 4) : Math.floor(lim) - randInt(1, 4);
+      }
+    } while (++guard < 40 && (Math.abs(b) > 24 || Math.abs(c) > 48));
+    S.a = a; S.b = b; S.c = c; S.op = pick(OPS);
+  }
+
+  /* ═══════════════ schermata di inserimento ═══════════════ */
+  var draft = { a: '1', b: '-2', c: '-3', op: '>' }, editing = null;
+
+  function paintSetup() {
+    document.querySelectorAll('.coef').forEach(function (el) {
+      var k = el.dataset.k, v = draft[k], n = parseInt(v, 10), show;
+      if (isNaN(n)) show = (v === '-' ? MINUS : '') + '?';
+      else show = (k === 'a') ? fmtInt(n) : String(Math.abs(n));   /* per b e c il segno sta nel separatore */
+      el.textContent = show;
+      el.classList.toggle('active', editing === k);
+    });
+    /* segni fra i termini */
+    ['b', 'c'].forEach(function (k) {
+      var n = parseInt(draft[k], 10);
+      var el = document.querySelector('.sgn[data-for="' + k + '"]');
+      el.textContent = (isNaN(n) || n >= 0) ? '+' : MINUS;
+    });
+    $('#op-chip').textContent = opSym(draft.op);
+    var a = parseInt(draft.a, 10);
+    var bad = isNaN(a) || a === 0 || isNaN(parseInt(draft.b, 10)) || isNaN(parseInt(draft.c, 10));
+    $('#setup-warn').textContent = isNaN(a) || a === 0 ? 'Il coefficiente a non può essere 0: non sarebbe di secondo grado.' : (bad ? 'Completa i coefficienti.' : ' ');
+    $('#btn-start').disabled = bad;
+    $('#btn-start').style.opacity = bad ? .45 : 1;
+  }
+
+  document.querySelectorAll('.coef').forEach(function (el) {
+    el.addEventListener('click', function () {
+      editing = el.dataset.k;
+      $('#pad').hidden = false;
+      paintSetup();
+    });
+  });
+  $('#op-chip').addEventListener('click', function () {
+    draft.op = OPS[(OPS.indexOf(draft.op) + 1) % 4];
+    paintSetup();
+  });
+  document.querySelectorAll('.key').forEach(function (el) {
+    el.addEventListener('click', function () {
+      if (!editing) return;
+      var k = el.dataset.key, v = draft[editing];
+      if (k === 'del') v = v.length ? v.slice(0, -1) : '';
+      else if (k === 'neg') v = v.charAt(0) === '-' ? v.slice(1) : '-' + v;
+      else if (v.replace('-', '').length < 3) v = (v === '0' ? '' : v) + k;
+      draft[editing] = v;
+      paintSetup();
+    });
+  });
+  $('#btn-random').addEventListener('click', function () {
+    randomProblem();
+    draft = { a: String(S.a), b: String(S.b), c: String(S.c), op: S.op };
+    editing = null; $('#pad').hidden = true;
+    paintSetup();
+  });
+  $('#btn-start').addEventListener('click', function () {
+    var a = parseInt(draft.a, 10), b = parseInt(draft.b, 10), c = parseInt(draft.c, 10);
+    if (isNaN(a) || a === 0 || isNaN(b) || isNaN(c)) return;
+    S.a = a; S.b = b; S.c = c; S.op = draft.op;
+    startProblem();
+  });
+
+  function openSetup() {
+    draft = { a: String(S.a), b: String(S.b), c: String(S.c), op: S.op };
+    editing = null; $('#pad').hidden = true;
+    paintSetup();
+    $('#setup').hidden = false;
+    requestAnimationFrame(function () { $('#setup').classList.remove('hide'); });
+    S.phase = 'setup';
+    setPips();
+    stripEl.hidden = true;
+  }
+  $('#btn-restart').addEventListener('click', function () {
+    if (S.phase === 'setup') return;
+    startProblem();
+  });
+
+  /* ═══════════════ aiuto ═══════════════ */
+  var HELP = {
+    setup: ['Come funziona', '<p>Scegli i tre coefficienti e il verso. Poi pieghi una barra fino a farne una parabola, alzi il mare e decidi quali zone tenere.</p>'],
+    bend: ['La concavità', '<p>Il coefficiente <span class="m">a</span> decide come si piega la parabola: se <span class="m">a &gt; 0</span> la concavità è verso l’alto (una valle), se <span class="m">a &lt; 0</span> è verso il basso (una collina).</p><p>Qui <span class="m">a = {A}</span>.</p>'],
+    sea: ['La quota giusta', '<p>La disequazione confronta il polinomio con <span class="m">0</span>. Quindi il pelo dell’acqua va portato a <span class="m">quota 0</span>: da lì in su il terreno è emerso e <span class="m">y &gt; 0</span>, da lì in giù è sommerso e <span class="m">y &lt; 0</span>.</p><p>Dove il profilo taglia il mare stanno le due soluzioni dell’equazione associata.</p>'],
+    pick: ['Quali zone', '<p>Il verso dice cosa cercare: <span class="m">&gt; 0</span> vuol dire terreno <b>sopra</b> il pelo dell’acqua, <span class="m">&lt; 0</span> terreno <b>sotto</b>.</p><p>Con <span class="m">≥</span> e <span class="m">≤</span> anche le rive fanno parte della soluzione: i pallini sono pieni.</p>'],
+    done: ['Il risultato', '<p>Le zone verdi sono quelle che risolvono la disequazione. Sotto trovi la soluzione scritta come disuguaglianza e come intervalli.</p>']
+  };
+  $('#btn-help').addEventListener('click', function () {
+    var h = HELP[S.phase] || HELP.setup;
+    $('#help-title').textContent = h[0];
+    $('#help-body').innerHTML = h[1].replace('{A}', fmtInt(S.a));
+    $('#helpbox').hidden = false;
+  });
+  $('#help-close').addEventListener('click', function () { $('#helpbox').hidden = true; });
+
+  /* ═══════════════ via ═══════════════ */
+  randomProblem();
+  draft = { a: String(S.a), b: String(S.b), c: String(S.c), op: S.op };
+  paintSetup();
+  solve();
+  resize();
+  requestAnimationFrame(loop);
+
+  /* ganci per il collaudo automatico */
+  window.__marea = {
+    S: S, V: V,
+    probe: function (a, b, c, op) {
+      S.a = a; S.b = b; S.c = c; S.op = op;
+      solve();
+      var p = buildSolution();
+      return { D: S.D, nr: S.nr, r1: S.r1, r2: S.r2, ok: S.okZones.slice(), txt: solutionText(p), iv: intervalText(p) };
+    },
+    play: function (a, b, c, op) { S.a = a; S.b = b; S.c = c; S.op = op; startProblem(); },
+    bend: function (d) { S.bend.d = d; bendRelease(); },
+    sea: function (y) { setSea(y); },
+    pickZone: function (i) { togglePick(i); },
+    confirm: function () { check(); },
+    tick: function (ms) { advance(ms || 16); },
+    size: function () { return { W: W, H: H }; },
+    shot: function () { return cv.toDataURL('image/png'); }
+  };
+})();

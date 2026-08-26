@@ -1,0 +1,311 @@
+:root{
+  --sky-top:#2b7fc4;
+  --ink:#0f2233;
+  --panel:#0d2233;
+  --panel-2:#143349;
+  --line:rgba(255,255,255,.16);
+  --text:#f2f7fb;
+  --muted:#9db4c6;
+  --sea:#1c7fc0;
+  --sea-deep:#0d3f68;
+  --grass:#5d9e46;
+  --gold:#ffca47;
+  --good:#4ec06a;
+  --bad:#ef6a5a;
+  --r:12px;
+  --font:"Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,sans-serif;
+  --math:"Cambria Math","Georgia",serif;
+}
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+html,body{height:100%;overflow:hidden;overscroll-behavior:none}
+
+body{
+  background:var(--panel);
+  color:var(--text);
+  font-family:var(--font);
+  font-size:16px;
+  -webkit-user-select:none;user-select:none;
+  -webkit-tap-highlight-color:transparent;
+  -webkit-text-size-adjust:100%;
+}
+input,textarea{-webkit-user-select:text;user-select:text}
+
+button{
+  font:inherit;color:inherit;background:none;border:none;
+  cursor:pointer;touch-action:manipulation;
+}
+
+#app{
+  position:fixed;inset:0;
+  display:flex;flex-direction:column;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* HUD */
+#hud{
+  flex:0 0 auto;
+  display:flex;align-items:center;gap:8px;
+  padding:6px 10px;
+  background:var(--panel);
+  border-bottom:1px solid var(--line);
+  min-height:44px;
+}
+#progress{display:flex;gap:5px;flex:0 0 auto}
+.pip{
+  width:7px;height:7px;border-radius:50%;
+  background:rgba(255,255,255,.2);
+  transition:background .3s,transform .3s;
+}
+.pip.on{background:var(--gold);transform:scale(1.25)}
+.pip.done{background:var(--good)}
+
+#eq-display{
+  flex:1 1 auto;min-width:0;
+  font-family:var(--math);
+  font-size:clamp(15px,4.4vw,21px);
+  text-align:center;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+  letter-spacing:.2px;
+}
+#eq-display .op{color:var(--gold);padding:0 2px}
+
+.hud-btns{display:flex;gap:4px;flex:0 0 auto}
+.hud-btns button{
+  width:34px;height:34px;border-radius:50%;
+  background:rgba(255,255,255,.08);
+  font-size:17px;font-weight:700;line-height:1;
+  display:flex;align-items:center;justify-content:center;
+}
+.hud-btns button:active{background:rgba(255,255,255,.2)}
+
+/* scena */
+/* la scena non deve mai sparire, nemmeno se il pannello cresce (testi grandi) */
+#stage{position:relative;flex:1 1 auto;min-height:36vh;overflow:hidden;background:var(--sky-top)}
+#scene{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
+
+#flash{
+  position:absolute;inset:0;pointer-events:none;
+  display:flex;align-items:center;justify-content:center;
+  font-size:clamp(19px,6vw,28px);font-weight:800;
+  text-shadow:0 2px 12px rgba(0,0,0,.55);
+  opacity:0;transition:opacity .3s;
+  padding:0 18px;text-align:center;line-height:1.25;
+}
+#flash.show{opacity:1}
+#flash.good{color:#d6ffe0}
+#flash.bad{color:#ffdcd6}
+
+/* striscia asse x */
+#axis-strip{
+  position:relative;flex:0 0 auto;height:58px;
+  background:var(--panel-2);
+  border-top:1px solid var(--line);
+  overflow:hidden;
+}
+#axis-line{
+  position:absolute;left:0;right:0;top:26px;height:2px;
+  background:rgba(255,255,255,.45);
+}
+#axis-zones{position:absolute;inset:0}
+.zone{
+  position:absolute;top:12px;height:30px;
+  border-radius:7px;
+  background:rgba(255,255,255,.07);
+  border:1.5px dashed rgba(255,255,255,.5);
+  transition:background .18s,border-color .18s;
+}
+.zone.picked{
+  background:rgba(78,192,106,.34);
+  border:1px solid var(--good);
+  box-shadow:0 0 0 1px rgba(78,192,106,.35) inset;
+}
+.zone.wrong{animation:shake .4s}
+@keyframes shake{
+  0%,100%{transform:translateX(0)}
+  25%{transform:translateX(-4px)}
+  75%{transform:translateX(4px)}
+}
+#axis-marks{position:absolute;inset:0;pointer-events:none}
+.mark{
+  position:absolute;top:19px;transform:translateX(-50%);
+  display:flex;flex-direction:column;align-items:center;
+}
+.mark .dot{
+  width:13px;height:13px;border-radius:50%;
+  border:2.5px solid var(--gold);background:var(--panel-2);
+}
+.mark .dot.full{background:var(--gold)}
+.mark .lbl{
+  margin-top:2px;font-family:var(--math);font-size:12.5px;
+  color:var(--gold);white-space:nowrap;
+}
+
+/* pannello in basso */
+#panel{
+  flex:0 1 auto;min-height:0;
+  background:var(--panel);
+  border-top:1px solid var(--line);
+  padding:9px 12px calc(9px + env(safe-area-inset-bottom));
+  display:flex;flex-direction:column;gap:8px;
+}
+/* se i testi crescono scorre solo questa parte: i pulsanti restano sempre in vista */
+#panel-scroll{
+  flex:0 1 auto;min-height:0;overflow:auto;
+  display:flex;flex-direction:column;gap:8px;
+}
+#hint{
+  font-size:clamp(13.5px,3.7vw,15.5px);
+  line-height:1.35;color:var(--text);text-align:center;
+  min-height:1.35em;
+}
+#hint b{color:var(--gold)}
+#hint .m{font-family:var(--math)}
+
+#calc{
+  background:rgba(255,255,255,.06);
+  border:1px solid var(--line);
+  border-radius:var(--r);
+  padding:8px 10px;
+  font-family:var(--math);
+  font-size:clamp(13px,3.6vw,15px);
+  line-height:1.5;
+  animation:pop .35s ease-out;
+}
+#calc .row{display:flex;justify-content:space-between;gap:8px}
+#calc .row span:last-child{color:var(--gold);white-space:nowrap}
+#calc .sol{
+  margin-top:6px;padding-top:6px;border-top:1px solid var(--line);
+  color:var(--good);font-size:clamp(14px,4vw,17px);text-align:center;
+}
+@keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+#actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+#actions button{
+  min-height:46px;padding:0 18px;border-radius:var(--r);
+  background:rgba(255,255,255,.1);
+  border:1px solid var(--line);
+  font-size:clamp(14px,3.9vw,16px);font-weight:600;
+  flex:1 1 auto;max-width:230px;
+}
+#actions button:active{transform:scale(.97)}
+button.ghost{opacity:.75}
+
+/* schermata iniziale */
+#setup{
+  position:absolute;inset:0;z-index:20;
+  background:linear-gradient(180deg,#0d2233,#123a56);
+  display:flex;align-items:center;justify-content:center;
+  padding:16px;
+  transition:opacity .4s;
+}
+#setup.hide{opacity:0;pointer-events:none}
+.setup-inner{width:100%;max-width:420px;display:flex;flex-direction:column;gap:14px}
+h1{
+  font-size:clamp(28px,9vw,40px);font-weight:800;letter-spacing:.5px;
+  text-align:center;line-height:1;
+}
+h1 .sub{
+  display:block;font-size:clamp(11.5px,3.2vw,13px);
+  font-weight:500;color:var(--muted);letter-spacing:1.4px;
+  text-transform:uppercase;margin-top:7px;
+}
+
+#setup-tip{
+  text-align:center;font-size:clamp(12.5px,3.5vw,14px);
+  color:var(--muted);margin-top:-6px;
+}
+
+#eq-builder{
+  display:flex;align-items:center;justify-content:center;
+  flex-wrap:wrap;gap:3px;
+  font-family:var(--math);
+  font-size:clamp(21px,6.4vw,28px);
+  background:rgba(255,255,255,.05);
+  border:1px solid var(--line);
+  border-radius:var(--r);
+  padding:14px 8px;
+}
+.coef{
+  min-width:46px;height:46px;padding:0 7px;
+  border-radius:9px;
+  background:rgba(255,255,255,.1);
+  border:2px solid transparent;
+  font-family:var(--math);font-size:inherit;font-weight:700;
+  color:var(--text);
+}
+.coef.active{border-color:var(--gold);background:rgba(255,202,71,.18)}
+.lit{opacity:.9}
+.sgn{padding:0 2px;opacity:.9}
+#op-chip{
+  min-width:50px;height:46px;margin:0 5px;
+  border-radius:9px;background:var(--gold);color:#241a00;
+  font-size:inherit;font-weight:800;font-family:var(--math);
+}
+#setup-warn{
+  text-align:center;font-size:13px;color:var(--bad);min-height:1.2em;
+}
+
+#pad{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:7px;
+  animation:pop .2s ease-out;
+}
+.key{
+  height:50px;border-radius:10px;
+  background:rgba(255,255,255,.1);
+  border:1px solid var(--line);
+  font-size:20px;font-weight:600;
+}
+.key:active{background:rgba(255,255,255,.24)}
+
+.setup-actions{display:flex;gap:9px}
+.setup-actions button{
+  flex:1;min-height:50px;border-radius:var(--r);
+  background:rgba(255,255,255,.1);
+  border:1px solid var(--line);
+  font-size:clamp(14px,4vw,16px);font-weight:600;
+}
+
+/* aiuto */
+#helpbox{
+  position:absolute;inset:0;z-index:30;
+  background:rgba(5,16,26,.86);
+  display:flex;align-items:center;justify-content:center;padding:18px;
+}
+.help-inner{
+  width:100%;max-width:400px;
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:16px;padding:16px;
+  display:flex;flex-direction:column;gap:11px;
+  animation:pop .25s ease-out;
+  max-height:82vh;overflow:auto;
+}
+#help-title{font-size:clamp(17px,4.8vw,20px);color:var(--gold)}
+#help-body{font-size:clamp(13.5px,3.8vw,15px);line-height:1.5;color:var(--text)}
+#help-body p{margin-bottom:8px}
+#help-body .m{font-family:var(--math);color:var(--gold)}
+#help-close{min-height:46px;border-radius:var(--r);font-weight:700}
+
+/* il dorato deve battere gli sfondi dei contenitori, quindi viene dopo */
+#actions button.primary,
+.setup-actions button.primary,
+.help-inner button.primary{
+  background:var(--gold);color:#241a00;border-color:transparent;
+}
+
+/* su schermo largo resta una colonna da telefono, centrata */
+@media (min-width:560px){
+  #app{left:50%;right:auto;width:520px;transform:translateX(-50%);
+       border-left:1px solid var(--line);border-right:1px solid var(--line)}
+}
+
+/* schermi bassi: comprimo un po' */
+@media (max-height:640px){
+  #axis-strip{height:52px}
+  #panel{padding-top:7px;gap:6px}
+  #actions button{min-height:42px}
+}
+
+[hidden]{display:none!important}
