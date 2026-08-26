@@ -779,20 +779,26 @@
   /* ═══════════════ fase 2 — la marea ═══════════════ */
   function nudge(dir) {
     if (S.sea.locked) return;
-    var st = (V.y1 - V.y0) * .035;
+    var st = (V.y1 - V.y0) * .015;   /* passo fine: sotto la soglia di velocità */
     setSea(S.sea.y + dir * st);
   }
   function setSea(y) {
     if (S.sea.locked) return;
     var prev = S.sea.y;
     y = clamp(y, S.sea.min, S.sea.max);
-    /* Aggancio stretto: solo quando il pelo dell'acqua è praticamente sulla quota zero
-       (5 px), oppure quando la scavalca. Una calamita larga toglieva all'utente la
-       regolazione fine e sembrava che l'app aggiustasse da sé. */
-    if (Math.abs(Y2P(y) - Y2P(0)) < 5 || (prev < 0 && y >= 0) || (prev > 0 && y <= 0)) {
+    /* Aggancio stretto (5 px) e solo se il movimento è controllato: chi sventola il dito
+       e scavalca la quota zero NON aggancia, passa oltre e deve tornare indietro piano.
+       Il livello giusto va saputo, non trovato per caso. */
+    var salto = Math.abs(Y2P(y) - Y2P(prev));
+    var scavalca = (prev < 0 && y >= 0) || (prev > 0 && y <= 0);
+    var vicino = Math.abs(Y2P(y) - Y2P(0)) < 5;
+    if ((vicino || scavalca) && salto < 12) {
       S.sea.y = 0;
       revealRoots();
-    } else S.sea.y = y;
+    } else {
+      S.sea.y = y;
+      if (scavalca) flash('Troppo veloce: sei passato oltre', false);
+    }
   }
 
   function revealRoots() {
@@ -1197,6 +1203,7 @@
 
   /* ═══════════════ avvio di un problema ═══════════════ */
   function startProblem() {
+    tweens.length = 0;      /* animazioni e attese della partita precedente: via, o fanno avanzare la fase da sole */
     solve();
     S.bend = { d: 0, morph: 0, wrong: false, dragging: false, touched: false, busy: false };
     S.sea = { y: 0, min: 0, max: 0, dragging: false, locked: false, revealed: false, dragY0: 0, dragS0: 0 };
@@ -1299,6 +1306,7 @@
   });
 
   function openSetup() {
+    tweens.length = 0;
     draft = { a: String(S.a), b: String(S.b), c: String(S.c), op: S.op };
     editing = null; $('#pad').hidden = true;
     paintSetup();
